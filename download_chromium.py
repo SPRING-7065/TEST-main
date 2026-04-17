@@ -1,61 +1,99 @@
+"""
+下载便携版 Chromium 供 PyInstaller 打包使用。
+
+使用 Chromium 官方 snapshot 而非复制系统 Chrome，优势：
+  - 自带所有依赖 DLL，不依赖用户机器的 VC++ Runtime 版本
+  - 真正的便携包，在任意 Windows 机器上解压即用
+  - 版本固定，行为可预期，不受用户 Chrome 更新影响
+"""
 import os
-import shutil
 import sys
+import shutil
+import urllib.request
+import zipfile
 
-print("Looking for Chrome on GitHub Actions Windows runner...")
+SNAPSHOT_BASE = (
+    "https://commondatastorage.googleapis.com"
+    "/chromium-browser-snapshots/Win_x64"
+)
+DEST_DIR = os.path.join(os.getcwd(), "browser")
+ZIP_PATH = os.path.join(os.getcwd(), "chrome-win.zip")
 
-# GitHub Actions Windows runner has Chrome pre-installed
-chrome_candidates = [
-    r"C:\Program Files\Google\Chrome\Application\chrome.exe",
-    r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
-    os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe"),
-]
 
-chrome_path = None
-for path in chrome_candidates:
-    print(f"Checking: {path}")
-    if os.path.exists(path):
-        chrome_path = path
-        print(f"Found Chrome: {path}")
-        break
+def get_latest_version() -> str:
+    url = f"{SNAPSHOT_BASE}/LAST_CHANGE"
+    print(f"Fetching latest Chromium version from: {url}")
+    with urllib.request.urlopen(url, timeout=30) as resp:
+        version = resp.read().decode().strip()
+    print(f"Latest snapshot: {version}")
+    return version
 
-if not chrome_path:
-    print("Searching all drives...")
-    for base in [r"C:\Program Files", r"C:\Program Files (x86)"]:
-        if not os.path.exists(base):
-            continue
-        for root, dirs, files in os.walk(base):
-            for f in files:
-                if f.lower() == "chrome.exe":
-                    chrome_path = os.path.join(root, f)
-                    print(f"Found: {chrome_path}")
-                    break
-            if chrome_path:
+
+def download_with_progress(url: str, dest: str):
+    print(f"Downloading: {url}")
+
+    def reporthook(count, block_size, total_size):
+        downloaded = count * block_size
+        if total_size > 0:
+            pct = min(downloaded * 100 // total_size, 100)
+            mb = downloaded / 1024 / 1024
+            total_mb = total_size / 1024 / 1024
+            print(f"\r  {pct}%  {mb:.1f}/{total_mb:.1f} MB", end="", flush=True)
+
+    urllib.request.urlretrieve(url, dest, reporthook)
+    print()
+
+
+def main():
+    # 获取最新版本号
+    version = get_latest_version()
+    zip_url = f"{SNAPSHOT_BASE}/{version}/chrome-win.zip"
+
+    # 清理旧目录
+    if os.path.exists(DEST_DIR):
+        print(f"Removing old browser dir: {DEST_DIR}")
+        shutil.rmtree(DEST_DIR)
+
+    # 下载
+    download_with_progress(zip_url, ZIP_PATH)
+    print(f"Downloaded: {ZIP_PATH}")
+
+    # 解压
+    print("Extracting...")
+    with zipfile.ZipFile(ZIP_PATH, "r") as zf:
+        zf.extractall(os.getcwd())
+
+    # chrome-win.zip 解压后是 chrome-win/ 文件夹，重命名为 browser/
+    extracted = os.path.join(os.getcwd(), "chrome-win")
+    if os.path.exists(extracted):
+        os.rename(extracted, DEST_DIR)
+    else:
+        # 兜底：找任何 chrome 开头的目录
+        for name in os.listdir(os.getcwd()):
+            full = os.path.join(os.getcwd(), name)
+            if name.startswith("chrome") and os.path.isdir(full) and full != DEST_DIR:
+                os.rename(full, DEST_DIR)
                 break
 
-if not chrome_path:
-    print("Chrome not found, listing Program Files:")
-    for base in [r"C:\Program Files", r"C:\Program Files (x86)"]:
-        if os.path.exists(base):
-            print(f"\n{base}:")
-            for item in os.listdir(base):
-                print(f"  {item}")
-    sys.exit(1)
+    # 清理 zip
+    if os.path.exists(ZIP_PATH):
+        os.remove(ZIP_PATH)
 
-# Copy Chrome directory
-chrome_dir = os.path.dirname(chrome_path)
-dest = os.path.join(os.getcwd(), "browser")
+    # 验证
+    chrome_exe = os.path.join(DEST_DIR, "chrome.exe")
+    if not os.path.exists(chrome_exe):
+        print(f"ERROR: chrome.exe not found in {DEST_DIR}")
+        if os.path.exists(DEST_DIR):
+            print("Contents:", os.listdir(DEST_DIR))
+        sys.exit(1)
 
-if os.path.exists(dest):
-    shutil.rmtree(dest)
+    total = sum(
+        os.path.getsize(os.path.join(dp, f))
+        for dp, dn, fn in os.walk(DEST_DIR)
+        for f in fn
+    )
+    print(f"Done. Chromium {version} ready at: {DEST_DIR}  ({total/1024/1024:.1f} MB)")
 
-print(f"Copying Chrome from: {chrome_dir}")
-shutil.copytree(chrome_dir, dest)
 
-total = sum(
-    os.path.getsize(os.path.join(dp, f))
-    for dp, dn, fn in os.walk(dest)
-    for f in fn
-)
-print(f"Done. Size: {total/1024/1024:.1f} MB")
-print(f"Chrome copied to: {dest}")
+if __name__ == "__main__":
+    main()

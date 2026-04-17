@@ -215,13 +215,20 @@ class ExecutionEngine:
         options.set_download_path(download_dir)
         options.set_argument('--disable-popup-blocking')
         options.set_argument('--disable-notifications')
-        # 隐藏自动化特征，避免网站检测到 CDP 控制后拒绝访问
+        # 隐藏自动化特征
         options.set_argument('--disable-blink-features=AutomationControlled')
         options.set_argument('--exclude-switches=enable-automation')
         options.set_argument('--disable-infobars')
-        # --no-sandbox仅在非Windows环境下需要
+
         import platform as _platform
-        if _platform.system() != 'Windows':
+        _is_windows = _platform.system() == 'Windows'
+        if _is_windows:
+            # 打包后 Chrome 从非标准目录运行，GPU 进程和沙箱进程可能无法启动
+            # 导致渲染进程返回空白页；需显式禁用沙箱和 GPU 沙箱
+            options.set_argument('--no-sandbox')
+            options.set_argument('--disable-gpu-sandbox')
+            options.set_argument('--disable-software-rasterizer')
+        else:
             options.set_argument('--no-sandbox')
             options.set_argument('--disable-dev-shm-usage')
 
