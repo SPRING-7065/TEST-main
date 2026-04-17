@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.env
+*.venv
+venv/
+.venv/
+ENV/
+env/
+
+# PyInstaller
+dist/
+build/
+*.spec
+
+# VS Code
+.vscode/
+
+# System
+.DS_Store
+Thumbs.db
+
+# 运行时生成（不需要上传）
+browser_cache/
+run_log.txt
+tasks.json
+下载数据库/

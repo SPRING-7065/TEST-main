@@ -1,0 +1,71 @@
+name: Build Windows Package
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    timeout-minutes: 60
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Python 3.11
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Install dependencies
+      shell: cmd
+      run: |
+        set PYTHONIOENCODING=utf-8
+        set PYTHONUTF8=1
+        python -m pip install --upgrade pip
+        pip install -r requirements-dev.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
+
+    - name: Download Chromium
+      shell: cmd
+      run: |
+        set PYTHONIOENCODING=utf-8
+        set PYTHONUTF8=1
+        python download_chromium.py
+
+    - name: Generate icon
+      shell: cmd
+      run: |
+        set PYTHONIOENCODING=utf-8
+        set PYTHONUTF8=1
+        python gen_icon.py
+
+    - name: Check syntax
+      shell: cmd
+      run: |
+        set PYTHONIOENCODING=utf-8
+        set PYTHONUTF8=1
+        python check_syntax.py
+
+    - name: PyInstaller build
+      shell: cmd
+      run: |
+        set PYTHONIOENCODING=utf-8
+        set PYTHONUTF8=1
+        pyinstaller build.spec --clean --noconfirm
+
+    - name: Package output
+      shell: cmd
+      run: |
+        set PYTHONIOENCODING=utf-8
+        set PYTHONUTF8=1
+        python package_output.py
+
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: WebAutoDownloader_Windows
+        path: WebAutoDownloader_v1.1.2_*.zip
+        retention-days: 30
+        if-no-files-found: error
