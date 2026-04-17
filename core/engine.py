@@ -296,6 +296,8 @@ class ExecutionEngine:
             element = self._find_element(selector, step.selector_type, timeout)
             element.click()
             time.sleep(0.5)
+            # 点击可能触发页面跳转，等待新页面加载完成
+            self._wait_for_page_load(timeout)
         elif step_type == StepType.INPUT:
             element = self._find_element(selector, step.selector_type, timeout)
             # 先尝试原生clear+input
@@ -391,10 +393,24 @@ class ExecutionEngine:
             raise
 
     def _wait_for_page_load(self, timeout: int = 120) -> None:
+        # 等待 DOM 加载完成
         try:
-            self._page.wait.load_start(timeout=timeout)
+            self._page.wait.doc_loaded(timeout=timeout)
         except Exception:
             pass
+        # SPA 框架（React/Vue）在 readyState=complete 后 JS 可能还未渲染
+        # 额外检测 body 子元素数量 > 1 才认为页面真正可用，最多等 15 秒
+        deadline = time.time() + 15
+        while time.time() < deadline:
+            try:
+                count = self._page.run_js(
+                    "return document.body ? document.body.children.length : 0"
+                )
+                if isinstance(count, int) and count > 1:
+                    break
+            except Exception:
+                break
+            time.sleep(0.5)
 
     def _handle_download_click(self, step: Step, selector: str,
                                 download_dir: str, timeout: int) -> None:
