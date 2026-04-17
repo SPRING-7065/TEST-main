@@ -1,2 +1,2 @@
-PySide6>=6.6.0
+PySide6==6.7.2
 DrissionPage>=4.0.0
