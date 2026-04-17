@@ -211,6 +211,10 @@ class ExecutionEngine:
         options.set_download_path(download_dir)
         options.set_argument('--disable-popup-blocking')
         options.set_argument('--disable-notifications')
+        # 隐藏自动化特征，避免网站检测到 CDP 控制后拒绝访问
+        options.set_argument('--disable-blink-features=AutomationControlled')
+        options.set_argument('--exclude-switches=enable-automation')
+        options.set_argument('--disable-infobars')
         # --no-sandbox仅在非Windows环境下需要
         import platform as _platform
         if _platform.system() != 'Windows':

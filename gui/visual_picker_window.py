@@ -193,6 +193,10 @@ class PickerThread(QThread):
             options.headless(False)
             options.set_argument('--window-size=1280,800')
             options.set_argument('--window-position=100,100')
+            # 隐藏自动化特征
+            options.set_argument('--disable-blink-features=AutomationControlled')
+            options.set_argument('--exclude-switches=enable-automation')
+            options.set_argument('--disable-infobars')
             import platform as _plt
             if _plt.system() != 'Windows':
                 options.set_argument('--no-sandbox')
