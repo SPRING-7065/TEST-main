@@ -75,7 +75,7 @@ PICKER_JS = """
 
     var banner = document.createElement('div');
     banner.id = '__webAutoBanner';
-    banner.style.cssText = 'position:fixed;top:0;left:0;right:0;background:linear-gradient(135deg,#667eea,#764ba2);color:white;text-align:center;padding:10px;font-size:14px;font-weight:bold;z-index:9999999;font-family:Microsoft YaHei,sans-serif;box-shadow:0 2px 10px rgba(0,0,0,0.3);';
+    banner.style.cssText = 'position:fixed;bottom:0;left:0;right:0;background:linear-gradient(135deg,#667eea,#764ba2);color:white;text-align:center;padding:6px;font-size:13px;font-weight:bold;z-index:9999999;font-family:Microsoft YaHei,sans-serif;box-shadow:0 -2px 10px rgba(0,0,0,0.3);opacity:0.92;';
     banner.innerHTML = '🎯 拾取/录制模式 | 左键单击捕获元素 | 右键退出';
     document.body.appendChild(banner);
 
@@ -205,6 +205,22 @@ class PickerThread(QThread):
             if chromium_path:
                 options.set_browser_path(chromium_path)
             self._page = ChromiumPage(options)
+            _stealth_js = """
+                Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+                window.chrome = {runtime: {}, loadTimes: function(){}, csi: function(){}, app: {}};
+                const _pq = navigator.permissions.query.bind(navigator.permissions);
+                navigator.permissions.query = p =>
+                    p.name === 'notifications'
+                    ? Promise.resolve({state: Notification.permission})
+                    : _pq(p);
+                Object.defineProperty(navigator, 'plugins', {get: () => [1,2,3,4,5]});
+                Object.defineProperty(navigator, 'languages', {get: () => ['zh-CN','zh','en']});
+            """
+            try:
+                self._page.run_cdp('Page.addScriptToEvaluateOnNewDocument',
+                                   source=_stealth_js)
+            except Exception:
+                pass
             if self.url and self.url != "about:blank":
                 self._page.get(self.url)
                 time.sleep(2)

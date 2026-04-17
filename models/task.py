@@ -46,6 +46,7 @@ class Task:
     max_retries: int = 3
     timeout_per_step: int = 120
     save_dir_override: str = ""      # 留空则使用默认路径
+    fresh_session: bool = False      # True=每次运行前清除Cookie，避免登录状态残留导致第二次失败
     last_run_time: str = ""
     last_run_status: str = ""        # success / failed / running / never
  

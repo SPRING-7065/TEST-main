@@ -124,28 +124,29 @@ class TaskCard(QFrame):
         btn_col.setSpacing(5)
         is_running = self.task.last_run_status == "running"
 
-        if is_running:
-            stop_btn = QPushButton("⏹ 停止")
-            stop_btn.setFixedSize(110, 30)
-            stop_btn.setStyleSheet(
-                "QPushButton{background:#e74c3c;color:white;border-radius:4px;"
-                "font-weight:bold;border:none;}"
-                "QPushButton:hover{background:#c0392b;}"
-            )
-            stop_btn.clicked.connect(
-                lambda: self.stop_clicked.emit(self.task.task_id)
-            )
-            btn_col.addWidget(stop_btn)
-        else:
-            run_btn = QPushButton("▶ 立即执行 ▼")
-            run_btn.setFixedSize(110, 30)
-            run_btn.setStyleSheet(
-                "QPushButton{background:#27ae60;color:white;border-radius:4px;"
-                "font-weight:bold;border:none;padding-left:6px;}"
-                "QPushButton:hover{background:#2ecc71;}"
-            )
-            run_btn.clicked.connect(self._show_run_menu)
-            btn_col.addWidget(run_btn)
+        self._stop_btn = QPushButton("⏹ 停止")
+        self._stop_btn.setFixedSize(110, 30)
+        self._stop_btn.setStyleSheet(
+            "QPushButton{background:#e74c3c;color:white;border-radius:4px;"
+            "font-weight:bold;border:none;}"
+            "QPushButton:hover{background:#c0392b;}"
+        )
+        self._stop_btn.clicked.connect(
+            lambda: self.stop_clicked.emit(self.task.task_id)
+        )
+        self._stop_btn.setVisible(is_running)
+        btn_col.addWidget(self._stop_btn)
+
+        self._run_btn = QPushButton("▶ 立即执行 ▼")
+        self._run_btn.setFixedSize(110, 30)
+        self._run_btn.setStyleSheet(
+            "QPushButton{background:#27ae60;color:white;border-radius:4px;"
+            "font-weight:bold;border:none;padding-left:6px;}"
+            "QPushButton:hover{background:#2ecc71;}"
+        )
+        self._run_btn.clicked.connect(self._show_run_menu)
+        self._run_btn.setVisible(not is_running)
+        btn_col.addWidget(self._run_btn)
 
         edit_btn = QPushButton("✏️ 编辑")
         edit_btn.setFixedSize(110, 30)
@@ -295,6 +296,20 @@ class TaskCard(QFrame):
         if not visible:
             self.progress_widget.setVisible(False)
 
+    def refresh_status(self):
+        """任务完成后刷新按钮状态和状态标签"""
+        is_running = self.task.last_run_status == "running"
+        self._stop_btn.setVisible(is_running)
+        self._run_btn.setVisible(not is_running)
+        status_cfg = STATUS_CONFIG.get(
+            self.task.last_run_status, STATUS_CONFIG["never"]
+        )
+        self.status_label.setText(status_cfg["text"])
+        self.status_label.setStyleSheet(
+            f"color:{status_cfg['color']}; font-size:11px; font-weight:bold;"
+        )
+        self._apply_card_style()
+
     def _on_screenshot_clicked(self, event):
         if self._current_pixmap:
             self._screenshot_dialog = ScreenshotDialog(
@@ -417,3 +432,4 @@ class TaskListWidget(QWidget):
         card = self._cards.get(task_id)
         if card:
             card.show_screenshot_panel(False)
+            card.refresh_status()

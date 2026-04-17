@@ -192,13 +192,17 @@ class ExecutionEngine:
         from DrissionPage import ChromiumPage, ChromiumOptions
 
         options = ChromiumOptions()
+        # 两种模式都使用相同窗口尺寸，确保元素坐标、响应式布局一致
+        # 无头模式不设置窗口尺寸时默认 800x600，会导致静默/调试行为不一致
+        options.set_argument('--window-size=1280,800')
         if self.debug_mode:
             options.headless(False)
-            options.set_argument('--window-size=1280,800')
             options.set_argument('--window-position=50,50')
             self._log("  🖥️ 调试模式：浏览器窗口已打开，您可以实时观察执行过程")
         else:
             options.headless(True)
+            options.set_argument('--disable-gpu')
+            options.set_argument('--force-device-scale-factor=1')
 
         options.no_imgs(False)
         options.mute(True)
@@ -229,6 +233,24 @@ class ExecutionEngine:
         self._page = ChromiumPage(options)
         self._page.set.download_path(download_dir)
         self._page.set.auto_handle_alert(True)
+        # 注入反检测脚本：在每个页面加载前执行，抹除自动化特征
+        # Page.addScriptToEvaluateOnNewDocument 注册的脚本比页面JS更早运行
+        _stealth_js = """
+            Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+            window.chrome = {runtime: {}, loadTimes: function(){}, csi: function(){}, app: {}};
+            const _pq = navigator.permissions.query.bind(navigator.permissions);
+            navigator.permissions.query = p =>
+                p.name === 'notifications'
+                ? Promise.resolve({state: Notification.permission})
+                : _pq(p);
+            Object.defineProperty(navigator, 'plugins', {get: () => [1,2,3,4,5]});
+            Object.defineProperty(navigator, 'languages', {get: () => ['zh-CN','zh','en']});
+        """
+        try:
+            self._page.run_cdp('Page.addScriptToEvaluateOnNewDocument',
+                               source=_stealth_js)
+        except Exception:
+            pass
 
         total_steps = len(self.task.steps)
         self._log(f"任务【{self.task.name}】浏览器就绪，共 {total_steps} 个步骤，开始执行...")
@@ -260,6 +282,8 @@ class ExecutionEngine:
                     self._take_screenshot()
             except Exception as e:
                 elapsed = time.time() - self._step_start_time
+                if self._stop_flag:
+                    raise TaskExecutionError("任务被手动停止")
                 if step.optional:
                     self._log(
                         f"  ⚠️ 步骤 {i} 失败（可选步骤，跳过）耗时{elapsed:.1f}s："
@@ -294,10 +318,44 @@ class ExecutionEngine:
             self._wait_for_page_load(timeout)
         elif step_type == StepType.CLICK:
             element = self._find_element(selector, step.selector_type, timeout)
-            element.click()
-            time.sleep(0.5)
-            # 点击可能触发页面跳转，等待新页面加载完成
-            self._wait_for_page_load(timeout)
+            url_before = ""
+            try:
+                url_before = self._page.url or ""
+            except Exception:
+                pass
+            # 三层点击降级策略：
+            # 1. scroll.to_see() + actions.click()：真实鼠标事件链，最兼容 UI 框架
+            # 2. element.click()：CDP dispatch，元素需在视口内
+            # 3. JS this.click()：纯 DOM 事件，无需坐标/可见性，作为最终兜底
+            clicked = False
+            try:
+                try:
+                    element.scroll.to_see()
+                    time.sleep(0.2)
+                except Exception:
+                    pass
+                self._page.actions.click(element)
+                clicked = True
+                self._log(f"    ✅ actions.click 成功", "info")
+            except Exception as e1:
+                self._log(f"    ℹ️ actions.click 失败({type(e1).__name__})，尝试 element.click", "info")
+                try:
+                    element.click()
+                    clicked = True
+                    self._log(f"    ✅ element.click 成功", "info")
+                except Exception as e2:
+                    self._log(f"    ℹ️ element.click 失败({type(e2).__name__})，使用 JS click", "info")
+            if not clicked:
+                element.run_js("this.click()")
+                self._log(f"    ✅ JS this.click() 兜底执行", "info")
+            time.sleep(0.8)
+            # 通过URL变化判断是否触发了页面跳转，避免干扰弹窗等同页操作
+            try:
+                url_after = self._page.url or ""
+                if url_after != url_before:
+                    self._wait_for_page_load(timeout)
+            except Exception:
+                pass
         elif step_type == StepType.INPUT:
             element = self._find_element(selector, step.selector_type, timeout)
             # 先尝试原生clear+input
@@ -374,23 +432,33 @@ class ExecutionEngine:
     def _find_element(self, selector: str, selector_type: str, timeout: int):
         if not selector:
             raise TaskExecutionError("选择器不能为空")
-        try:
-            if selector_type == "xpath":
-                element = self._page.ele(f'xpath:{selector}', timeout=timeout)
-            elif selector_type == "text":
-                element = self._page.ele(f'text:{selector}', timeout=timeout)
-            else:
-                # 必须加 css: 前缀，否则 DrissionPage 会把纯单词（如 'i'、'div'）
-                # 当成文字内容搜索而非 CSS 标签选择器，导致超时
-                css_selector = selector if selector.startswith('css:') else f'css:{selector}'
-                element = self._page.ele(css_selector, timeout=timeout)
-            if element is None:
-                raise TaskExecutionError(f"找不到元素：{selector}")
-            return element
-        except Exception as e:
-            if "timeout" in str(e).lower():
+        # 分段查找：每 5 秒检查一次停止标志，避免单次 120 秒等待无法响应停止
+        chunk = 5
+        deadline = time.time() + timeout
+        while True:
+            if self._stop_flag:
+                raise TaskExecutionError("任务被手动停止")
+            remaining = deadline - time.time()
+            if remaining <= 0:
                 raise TimeoutError(f"等待元素超过{timeout}秒：{selector}")
-            raise
+            t = min(chunk, remaining)
+            try:
+                if selector_type == "xpath":
+                    element = self._page.ele(f'xpath:{selector}', timeout=t)
+                elif selector_type == "text":
+                    element = self._page.ele(f'text:{selector}', timeout=t)
+                else:
+                    css_selector = selector if selector.startswith('css:') else f'css:{selector}'
+                    element = self._page.ele(css_selector, timeout=t)
+                if element is not None:
+                    return element
+            except Exception as e:
+                if self._stop_flag:
+                    raise TaskExecutionError("任务被手动停止")
+                if time.time() >= deadline:
+                    raise TimeoutError(f"等待元素超过{timeout}秒：{selector}")
+                if "timeout" not in str(e).lower():
+                    raise
 
     def _wait_for_page_load(self, timeout: int = 120) -> None:
         # 等待 DOM 加载完成
@@ -399,15 +467,38 @@ class ExecutionEngine:
         except Exception:
             pass
         # SPA 框架（React/Vue）在 readyState=complete 后 JS 可能还未渲染
-        # 额外检测 body 子元素数量 > 1 才认为页面真正可用，最多等 15 秒
+        # 检测策略：body 子元素 > 1 AND DOM 元素总数稳定（连续两次相同）
+        # 最多等 15 秒，每 0.5 秒检查一次
         deadline = time.time() + 15
+        elapsed_checks = 0
+        last_dom_count = -1
+        stable_count = 0
         while time.time() < deadline:
+            if self._stop_flag:
+                break
             try:
+                ready = self._page.run_js("return document.readyState")
                 count = self._page.run_js(
                     "return document.body ? document.body.children.length : 0"
                 )
+                dom_total = self._page.run_js(
+                    "return document.querySelectorAll('*').length"
+                )
+                url = self._page.url or ""
+                elapsed_checks += 1
+                if elapsed_checks == 1 or elapsed_checks % 4 == 0:
+                    self._log(
+                        f"    [页面检测] readyState={ready} body子元素={count} DOM总数={dom_total} url={url[:60]}",
+                        "info"
+                    )
                 if isinstance(count, int) and count > 1:
-                    break
+                    if dom_total == last_dom_count:
+                        stable_count += 1
+                        if stable_count >= 2:  # 连续 1 秒 DOM 稳定则认为渲染完成
+                            break
+                    else:
+                        stable_count = 0
+                    last_dom_count = dom_total
             except Exception:
                 break
             time.sleep(0.5)
