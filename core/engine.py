@@ -323,39 +323,30 @@ class ExecutionEngine:
                 url_before = self._page.url or ""
             except Exception:
                 pass
-            # 三层点击降级策略：
-            # 1. scroll.to_see() + actions.click()：真实鼠标事件链，最兼容 UI 框架
-            # 2. element.click()：CDP dispatch，元素需在视口内
-            # 3. JS this.click()：纯 DOM 事件，无需坐标/可见性，作为最终兜底
-            clicked = False
-            try:
-                try:
-                    element.scroll.to_see()
-                    time.sleep(0.2)
-                except Exception:
-                    pass
-                self._page.actions.click(element)
-                clicked = True
-                self._log(f"    ✅ actions.click 成功", "info")
-            except Exception as e1:
-                self._log(f"    ℹ️ actions.click 失败({type(e1).__name__})，尝试 element.click", "info")
-                try:
-                    element.click()
-                    clicked = True
-                    self._log(f"    ✅ element.click 成功", "info")
-                except Exception as e2:
-                    self._log(f"    ℹ️ element.click 失败({type(e2).__name__})，使用 JS click", "info")
-            if not clicked:
-                element.run_js("this.click()")
-                self._log(f"    ✅ JS this.click() 兜底执行", "info")
+            # 提前快照：若此点击触发下载，可用文件监控兜底
+            interceptor = DownloadInterceptor(download_dir, self.task.name)
+            interceptor.snapshot_before()
+            self._do_click(element)
             time.sleep(0.8)
-            # 通过URL变化判断是否触发了页面跳转，避免干扰弹窗等同页操作
+            # URL 变化 → 页面跳转
             try:
                 url_after = self._page.url or ""
                 if url_after != url_before:
                     self._wait_for_page_load(timeout)
+                    return  # 跳转后不检测下载
             except Exception:
                 pass
+            # URL 未变 → 检测是否触发了下载（2 秒窗口，不阻塞正常点击太久）
+            try:
+                mission = self._page.wait.download_begin(timeout=2)
+                self._log("  📥 检测到文件下载（建议将此步骤改为「⬇️ 点击下载」类型以确保每次验证）", "warning")
+                self._finish_download_mission(mission, timeout)
+            except Exception:
+                # 无下载触发，用文件监控再确认一次（0 延迟，几乎立即返回）
+                quick_file = interceptor.wait_for_new_file(timeout=1)
+                if quick_file:
+                    self._log("  📥 文件监控检测到下载（建议改为「⬇️ 点击下载」类型）", "warning")
+                    self._save_downloaded_file(quick_file)
         elif step_type == StepType.INPUT:
             element = self._find_element(selector, step.selector_type, timeout)
             # 先尝试原生clear+input
@@ -503,32 +494,83 @@ class ExecutionEngine:
                 break
             time.sleep(0.5)
 
+    def _do_click(self, element) -> None:
+        """三层点击降级：actions.click → element.click → JS this.click()"""
+        clicked = False
+        try:
+            try:
+                element.scroll.to_see()
+                time.sleep(0.2)
+            except Exception:
+                pass
+            self._page.actions.click(element)
+            clicked = True
+            self._log("    ✅ actions.click 成功", "info")
+        except Exception as e1:
+            self._log(f"    ℹ️ actions.click 失败({type(e1).__name__})，尝试 element.click", "info")
+            try:
+                element.click()
+                clicked = True
+                self._log("    ✅ element.click 成功", "info")
+            except Exception as e2:
+                self._log(f"    ℹ️ element.click 失败({type(e2).__name__})，使用 JS click", "info")
+        if not clicked:
+            element.run_js("this.click()")
+            self._log("    ✅ JS this.click() 兜底执行", "info")
+
+    def _save_downloaded_file(self, downloaded_path: str) -> None:
+        """将下载的文件移动到任务保存目录并记录"""
+        import shutil
+        original_name = os.path.basename(downloaded_path)
+        new_path = get_full_save_path(
+            task_name=self.task.name,
+            original_filename=original_name,
+            custom_dir=self.task.save_dir_override
+        )
+        try:
+            shutil.move(downloaded_path, new_path)
+            self._downloaded_files.append(new_path)
+            self._log(f"  ✅ 文件已保存：{new_path}")
+        except Exception:
+            self._downloaded_files.append(downloaded_path)
+            self._log(f"  ✅ 文件已保存：{downloaded_path}")
+
+    def _finish_download_mission(self, mission, timeout: int) -> None:
+        """等待 DrissionPage 下载任务完成并保存文件"""
+        self._log("  📥 检测到下载开始，等待写入完成...")
+        try:
+            result = mission.wait(timeout=timeout)
+            if result:
+                self._save_downloaded_file(str(result))
+                return
+        except Exception as e:
+            self._log(f"  ⚠️ 原生下载等待异常({type(e).__name__})，改用文件监控", "warning")
+        raise TaskExecutionError("下载任务等待失败，将由文件监控接管")
+
     def _handle_download_click(self, step: Step, selector: str,
                                 download_dir: str, timeout: int) -> None:
+        if not selector:
+            raise TaskExecutionError("下载步骤缺少目标元素选择器")
+        element = self._find_element(selector, step.selector_type, timeout)
+        # 提前快照，作为文件监控兜底的基准
         interceptor = DownloadInterceptor(download_dir, self.task.name)
         interceptor.snapshot_before()
-        if selector:
-            element = self._find_element(selector, step.selector_type, timeout)
-            element.click()
-        else:
-            raise TaskExecutionError("下载步骤缺少目标元素选择器")
+        # 三层点击，与普通 CLICK 步骤一致
+        self._do_click(element)
         self._log("  ⏳ 已点击下载按钮，等待文件保存...")
+        # 方案一：DrissionPage 原生下载事件（更准确，能拿到精确路径）
+        try:
+            mission = self._page.wait.download_begin(timeout=30)
+            self._finish_download_mission(mission, timeout)
+            return
+        except TaskExecutionError:
+            pass  # _finish_download_mission 内部已 fallthrough
+        except Exception as e:
+            self._log(f"  ℹ️ 原生下载API未响应({type(e).__name__})，改用文件监控", "info")
+        # 方案二：文件系统监控兜底（基于点击前的快照）
         downloaded_path = interceptor.wait_for_new_file(timeout=timeout)
         if downloaded_path:
-            import shutil
-            original_name = os.path.basename(downloaded_path)
-            new_path = get_full_save_path(
-                task_name=self.task.name,
-                original_filename=original_name,
-                custom_dir=self.task.save_dir_override
-            )
-            try:
-                shutil.move(downloaded_path, new_path)
-                self._downloaded_files.append(new_path)
-                self._log(f"  ✅ 文件已保存：{new_path}")
-            except Exception:
-                self._downloaded_files.append(downloaded_path)
-                self._log(f"  ✅ 文件已保存：{downloaded_path}")
+            self._save_downloaded_file(downloaded_path)
         else:
             raise TaskExecutionError(f"等待文件下载超过{timeout}秒，文件未能成功保存")
 
