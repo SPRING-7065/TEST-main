@@ -223,11 +223,15 @@ class ExecutionEngine:
         import platform as _platform
         _is_windows = _platform.system() == 'Windows'
         if _is_windows:
-            # 打包后 Chrome 从非标准目录运行，GPU 进程和沙箱进程可能无法启动
-            # 导致渲染进程返回空白页；需显式禁用沙箱和 GPU 沙箱
             options.set_argument('--no-sandbox')
             options.set_argument('--disable-gpu-sandbox')
-            options.set_argument('--disable-software-rasterizer')
+            if self.debug_mode:
+                # 调试模式可见窗口：便携Chromium硬件GPU初始化失败导致白屏
+                # 禁用硬件GPU，让Chromium回退到SwiftShader软件渲染
+                options.set_argument('--disable-gpu')
+            # 无头模式下 --disable-gpu 已在上方 else 分支设置，此处不再重复
+            # 注：之前此处有 --disable-software-rasterizer，与 --disable-gpu 同时存在
+            # 会把硬件和软件渲染全部禁掉，导致截图全白，已删除
         else:
             options.set_argument('--no-sandbox')
             options.set_argument('--disable-dev-shm-usage')
@@ -344,12 +348,18 @@ class ExecutionEngine:
             except Exception:
                 pass
             # URL 未变 → 检测是否触发了下载（2 秒窗口，不阻塞正常点击太久）
+            # DrissionPage 超时时返回 False 而非抛异常，需先判断真值
+            mission = None
             try:
-                mission = self._page.wait.download_begin(timeout=2)
+                m = self._page.wait.download_begin(timeout=2)
+                if m:
+                    mission = m
+            except Exception:
+                pass
+            if mission is not None:
                 self._log("  📥 检测到文件下载（建议将此步骤改为「⬇️ 点击下载」类型以确保每次验证）", "warning")
                 self._finish_download_mission(mission, timeout)
-            except Exception:
-                # 无下载触发，用文件监控再确认一次（0 延迟，几乎立即返回）
+            else:
                 quick_file = interceptor.wait_for_new_file(timeout=1)
                 if quick_file:
                     self._log("  📥 文件监控检测到下载（建议改为「⬇️ 点击下载」类型）", "warning")
@@ -566,14 +576,20 @@ class ExecutionEngine:
         self._do_click(element)
         self._log("  ⏳ 已点击下载按钮，等待文件保存...")
         # 方案一：DrissionPage 原生下载事件（更准确，能拿到精确路径）
+        # DrissionPage 超时返回 False，需先判断真值再使用
+        mission = None
         try:
-            mission = self._page.wait.download_begin(timeout=30)
-            self._finish_download_mission(mission, timeout)
-            return
-        except TaskExecutionError:
-            pass  # _finish_download_mission 内部已 fallthrough
+            m = self._page.wait.download_begin(timeout=30)
+            if m:
+                mission = m
         except Exception as e:
             self._log(f"  ℹ️ 原生下载API未响应({type(e).__name__})，改用文件监控", "info")
+        if mission is not None:
+            try:
+                self._finish_download_mission(mission, timeout)
+                return
+            except TaskExecutionError:
+                pass  # _finish_download_mission 内部已 fallthrough
         # 方案二：文件系统监控兜底（基于点击前的快照）
         downloaded_path = interceptor.wait_for_new_file(timeout=timeout)
         if downloaded_path:

@@ -198,7 +198,13 @@ class PickerThread(QThread):
             options.set_argument('--exclude-switches=enable-automation')
             options.set_argument('--disable-infobars')
             import platform as _plt
-            if _plt.system() != 'Windows':
+            if _plt.system() == 'Windows':
+                # 便携版Chromium在Windows上硬件GPU初始化失败会白屏
+                # 需要禁用GPU让其回退到SwiftShader软件渲染，同时关闭沙箱
+                options.set_argument('--no-sandbox')
+                options.set_argument('--disable-gpu-sandbox')
+                options.set_argument('--disable-gpu')
+            else:
                 options.set_argument('--no-sandbox')
                 options.set_argument('--disable-dev-shm-usage')
             chromium_path = get_chromium_path()
