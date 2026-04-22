@@ -3,7 +3,7 @@ import os
 import sys
 
 errors = []
-skip_dirs = {'build', 'dist', '.git', 'browser', '__pycache__', 'venv'}
+skip_dirs = {'build', 'dist', '.git', '__pycache__', 'venv'}
 
 for root, dirs, files in os.walk('.'):
     dirs[:] = [d for d in dirs if d not in skip_dirs]

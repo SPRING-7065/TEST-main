@@ -14,22 +14,8 @@ if not os.path.exists(dist_dir):
 
 print(f"Output folder: {dist_dir}")
 
-src = 'browser'
-dst = os.path.join(dist_dir, 'browser')
-
-if not os.path.exists(src):
-    print("Error: browser directory not found")
-    sys.exit(1)
-
-if os.path.exists(dst):
-    shutil.rmtree(dst)
-
-print("Copying Chromium...")
-shutil.copytree(src, dst)
-print("Done.")
-
 date_str = datetime.date.today().strftime('%Y%m%d')
-zip_name = f'WebAutoDownloader_v1.1.2_{date_str}'
+zip_name = f'WebAutoDownloader_v1.1.3_{date_str}'
 shutil.make_archive(zip_name, 'zip', 'dist', folder_name)
 
 size = os.path.getsize(zip_name + '.zip') / 1024 / 1024

@@ -47,6 +47,9 @@ core/
   file_manager.py             下载路径和文件命名管理
   logger.py                   日志系统（异常中文翻译）
 
+注意：原 download_chromium.py（便携 Chromium 下载）已废弃移除，
+     程序改为使用用户机器上预装的系统 Chrome。
+
 gui/
   main_window.py              主窗口（导航/日志面板/任务中心）
   task_editor_dialog.py       任务编辑对话框（步骤链配置）
@@ -179,7 +182,28 @@ storage/
      macOS: /Applications/Google Chrome.app/Contents/MacOS/Google Chrome
      Linux: /usr/bin/google-chrome 等
      visual_picker_window.py的PickerThread也同步使用get_chromium_path()
-     并补充--no-sandbox/--disable-dev-shm-usage（非Windows必需）
+     macOS/Linux 仍带 --no-sandbox + --disable-dev-shm-usage（容器/CI 场景）
+状态：已修复
+
+### Bug11：Windows 调试模式白屏（多次误诊后定性）
+症状：Windows 公司电脑运行打包版，调试模式浏览器窗口全白，
+     顶部出现"unsupported command-line flag: --no-sandbox"警告条
+误诊历史：先后判断为 GPU 沙箱失败、SwiftShader 缺失、缓存毒化等，
+     一路堆 --no-sandbox/--disable-gpu-sandbox/--use-angle=swiftshader/
+     --disable-gpu-compositing/--enable-unsafe-swiftshader 等 flag，
+     问题反而加重。
+真正根因：通过 chrome://gpu 看到 Compositing 绿字（GPU 完全正常），
+     再直接双击便携 chrome.exe 测试外网全拦截、内网部分白屏，
+     而同机器系统 Chrome 完全正常 → 公司电脑的企业终端管控
+     按二进制白名单工作，便携 Chromium 不在白名单 → 网络静默拦截。
+处置：1) 完全移除便携 Chromium 下载/打包链路（download_chromium.py
+     删除，CI 不再下载，package_output.py 不再复制 browser/）
+     2) get_chromium_path() 改为只查系统 Chrome，找不到时抛中文异常
+     3) 回滚所有 GPU/sandbox 相关 flag（包括顶部警告条的元凶 --no-sandbox）
+     4) README 增加"前置依赖：Google Chrome"段
+教训：以后遇到"特定二进制白屏/网络异常"先用 chrome://gpu 自检 GPU、
+     用同机器其他浏览器对比网络，再判断是不是企业管控/AV 干扰，
+     不要一上来就猜 flag。
 状态：已修复
 
 ---

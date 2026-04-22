@@ -23,6 +23,11 @@ Thumbs.db
 
 # 运行时生成（不需要上传）
 browser_cache/
+browser_cache_debug/
 run_log.txt
 tasks.json
 下载数据库/
+
+# 历史便携 Chromium 目录（已废弃，不再随包发布）
+browser/
+chrome-win.zip

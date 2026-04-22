@@ -22,12 +22,7 @@ def get_app_root() -> str:
     return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 def get_chromium_path() -> Optional[str]:
-    base = get_app_root()
     candidates = [
-        # 打包内置浏览器（Windows）
-        os.path.join(base, "browser", "chrome.exe"),
-        os.path.join(base, "browser", "chromium.exe"),
-        os.path.join(base, "browser", "chrome-win", "chrome.exe"),
         # Windows 系统 Chrome
         r"C:\Program Files\Google\Chrome\Application\chrome.exe",
         r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
@@ -43,6 +38,12 @@ def get_chromium_path() -> Optional[str]:
         if os.path.exists(path):
             return path
     return None
+
+
+CHROME_NOT_FOUND_MSG = (
+    "未检测到 Google Chrome。请先安装 Chrome 浏览器后重试："
+    "https://www.google.cn/chrome/"
+)
 
 def get_cache_dir(debug: bool = False) -> str:
     # 调试模式和无头模式使用独立缓存目录，避免GPU缓存文件相互污染
@@ -226,35 +227,14 @@ class ExecutionEngine:
         options.set_argument('--disable-infobars')
 
         import platform as _platform
-        _is_windows = _platform.system() == 'Windows'
-        if _is_windows:
-            options.set_argument('--no-sandbox')
-            options.set_argument('--disable-gpu-sandbox')
-            if self.debug_mode:
-                # 可见窗口终极防白屏组合（基于 Gemini 深度 review 结论）：
-                # 1. --disable-gpu：禁用硬件 GPU 加速
-                # 2. --use-angle=swiftshader：现代 Chromium 通过 ANGLE 层渲染，
-                #    须指定 SwiftShader 作为 ANGLE 后端（--use-gl=swiftshader 是旧路径）
-                # 3. --disable-gpu-compositing：强制 CPU 执行图层合成，解决可见窗口白屏
-                # 4. --disable-gpu-shader-disk-cache：禁用磁盘缓存，防止首次 GPU 初始化
-                #    失败的错误状态写入缓存导致后续每次启动也白屏（缓存毒化）
-                # 5. --enable-unsafe-swiftshader：Chromium GPU 黑名单可能阻止 SwiftShader，
-                #    此 flag 强制允许其运行
-                options.set_argument('--disable-gpu')
-                options.set_argument('--use-angle=swiftshader')
-                options.set_argument('--disable-gpu-compositing')
-                options.set_argument('--disable-gpu-shader-disk-cache')
-                options.set_argument('--enable-unsafe-swiftshader')
-            else:
-                # 无头模式：--disable-gpu 已在上方 else 分支设置；额外禁用缓存防毒化
-                options.set_argument('--disable-gpu-shader-disk-cache')
-        else:
+        if _platform.system() != 'Windows':
             options.set_argument('--no-sandbox')
             options.set_argument('--disable-dev-shm-usage')
 
         chromium_path = get_chromium_path()
-        if chromium_path:
-            options.set_browser_path(chromium_path)
+        if not chromium_path:
+            raise TaskExecutionError(CHROME_NOT_FOUND_MSG)
+        options.set_browser_path(chromium_path)
 
         self._log(f"任务【{self.task.name}】正在启动浏览器...")
         self._page = ChromiumPage(options)

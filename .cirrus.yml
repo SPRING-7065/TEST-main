@@ -22,11 +22,6 @@ build_task:
     - python -m pip install --upgrade pip
     - python -m pip install -r requirements-dev.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 
-  chromium_cache:
-    folder: browser
-    fingerprint_script: type download_chromium.py
-    populate_script: python download_chromium.py
-
   check_syntax_script:
     - python check_syntax.py
 

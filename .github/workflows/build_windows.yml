@@ -35,21 +35,6 @@ jobs:
         python -m pip install --upgrade pip
         pip install -r requirements-dev.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 
-    - name: Cache Chromium browser
-      id: cache-chromium
-      uses: actions/cache@v4
-      with:
-        path: browser
-        key: chromium-win64-${{ hashFiles('download_chromium.py') }}
-
-    - name: Download Chromium
-      if: steps.cache-chromium.outputs.cache-hit != 'true'
-      shell: cmd
-      run: |
-        set PYTHONIOENCODING=utf-8
-        set PYTHONUTF8=1
-        python download_chromium.py
-
     - name: Generate icon
       shell: cmd
       run: |
@@ -82,6 +67,6 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: WebAutoDownloader_Windows
-        path: WebAutoDownloader_v1.1.2_*.zip
+        path: WebAutoDownloader_v1.1.3_*.zip
         retention-days: 30
         if-no-files-found: error

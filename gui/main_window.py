@@ -36,7 +36,7 @@ class MainWindow(QMainWindow):
  
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("🤖 网页自动取数助手 v1.1.2")
+        self.setWindowTitle("🤖 网页自动取数助手 v1.1.3")
         self.setMinimumSize(900, 560)
         self.resize(1100, 700)
 

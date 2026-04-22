@@ -199,21 +199,14 @@ class PickerThread(QThread):
             options.set_argument('--exclude-switches=enable-automation')
             options.set_argument('--disable-infobars')
             import platform as _plt
-            if _plt.system() == 'Windows':
-                # 与 engine.py 调试模式保持相同的终极防白屏组合
-                options.set_argument('--no-sandbox')
-                options.set_argument('--disable-gpu-sandbox')
-                options.set_argument('--disable-gpu')
-                options.set_argument('--use-angle=swiftshader')
-                options.set_argument('--disable-gpu-compositing')
-                options.set_argument('--disable-gpu-shader-disk-cache')
-                options.set_argument('--enable-unsafe-swiftshader')
-            else:
+            if _plt.system() != 'Windows':
                 options.set_argument('--no-sandbox')
                 options.set_argument('--disable-dev-shm-usage')
+            from core.engine import CHROME_NOT_FOUND_MSG
             chromium_path = get_chromium_path()
-            if chromium_path:
-                options.set_browser_path(chromium_path)
+            if not chromium_path:
+                raise RuntimeError(CHROME_NOT_FOUND_MSG)
+            options.set_browser_path(chromium_path)
             self._page = ChromiumPage(options)
             _stealth_js = """
                 Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
