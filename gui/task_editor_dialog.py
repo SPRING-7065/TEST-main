@@ -249,8 +249,8 @@ class TaskEditorDialog(QDialog):
         self._picker_window: VisualPickerWindow = None
 
         self.setWindowTitle(f"{'新建任务' if self._is_new else '编辑任务'} — {self.task.name}")
-        self.setMinimumSize(850, 720)
-        self.resize(950, 780)
+        self.setMinimumSize(760, 580)
+        self.resize(860, 660)
 
         self._setup_ui()
         self._load_task_data()

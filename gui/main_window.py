@@ -37,8 +37,8 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("🤖 网页自动取数助手 v1.1.2")
-        self.setMinimumSize(1100, 700)
-        self.resize(1280, 800)
+        self.setMinimumSize(900, 560)
+        self.resize(1100, 700)
 
         # 数据
         self._tasks: List[Task] = load_tasks()
@@ -114,7 +114,7 @@ class MainWindow(QMainWindow):
     def _build_header(self) -> QWidget:
         """构建顶部标题栏"""
         header = QFrame()
-        header.setFixedHeight(60)
+        header.setFixedHeight(44)
         header.setStyleSheet(
             "QFrame { background: qlineargradient(x1:0,y1:0,x2:1,y2:0,"
             "stop:0 #1a1a2e,stop:0.5 #16213e,stop:1 #0f3460); }"
@@ -123,13 +123,13 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(20, 0, 20, 0)
  
         title = QLabel("🤖  网页自动取数助手")
-        title.setStyleSheet("color:white; font-size:20px; font-weight:bold;")
+        title.setStyleSheet("color:white; font-size:16px; font-weight:bold;")
         layout.addWidget(title)
  
         layout.addStretch()
  
         subtitle = QLabel("后台静默运行 · 定时自动下载 · 零代码配置")
-        subtitle.setStyleSheet("color:#a0aec0; font-size:12px;")
+        subtitle.setStyleSheet("color:#a0aec0; font-size:11px;")
         layout.addWidget(subtitle)
  
         return header
@@ -570,9 +570,9 @@ class MainWindow(QMainWindow):
                 background: #f0f2f5;
             }
             QTabWidget[tabPosition="2"] QTabBar::tab {
-                width: 60px;
-                height: 70px;
-                font-size: 11px;
+                width: 52px;
+                height: 58px;
+                font-size: 10px;
                 text-align: center;
                 border: 1px solid #ddd;
                 border-right: none;

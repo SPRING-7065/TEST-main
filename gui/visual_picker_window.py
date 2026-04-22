@@ -1,16 +1,17 @@
 """
-可视化元素拾取窗口
+可视化元素拾取窗口（侧边栏模式）
 """
 import time
 from typing import Optional
 
 from PySide6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
+    QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QLineEdit, QComboBox, QListWidget, QListWidgetItem,
-    QGroupBox, QMessageBox, QWidget
+    QMessageBox, QWidget, QFrame, QScrollArea, QApplication,
+    QSizePolicy
 )
-from PySide6.QtCore import Qt, Signal, QThread
-from PySide6.QtGui import QFont
+from PySide6.QtCore import Qt, Signal, QThread, QPoint
+from PySide6.QtGui import QFont, QCursor
 
 from models.step import Step, StepType, STEP_TYPE_LABELS
 
@@ -311,14 +312,21 @@ class PickerThread(QThread):
         except Exception:
             pass
 
-class VisualPickerWindow(QDialog):
+_PANEL_W = 260  # 侧边栏固定宽度
+
+
+class VisualPickerWindow(QWidget):
+    """拾取/录制侧边栏，固定 260px 宽，始终置顶，自动停靠屏幕右侧。"""
+
     step_configured = Signal(object)
 
     def __init__(self, parent=None, initial_url: str = ""):
-        super().__init__(parent)
-        self.setWindowTitle("🎯 可视化元素拾取 - 点击网页元素来配置步骤")
-        self.setMinimumSize(720, 680)
-        self.setModal(False)
+        super().__init__(
+            parent,
+            Qt.WindowType.Tool | Qt.WindowType.WindowStaysOnTopHint,
+        )
+        self.setWindowTitle("🎯 拾取控制台")
+        self.setFixedWidth(_PANEL_W)
 
         self._picker_thread: Optional[PickerThread] = None
         self._initial_url = initial_url
@@ -329,217 +337,223 @@ class VisualPickerWindow(QDialog):
         self._setup_ui()
         self._apply_styles()
 
+    def show(self):
+        """首次显示时自动定位到屏幕右侧边缘。"""
+        super().show()
+        screen = QApplication.primaryScreen().availableGeometry()
+        x = screen.right() - _PANEL_W - 8
+        y = screen.top() + 80
+        self.move(x, y)
+
     # ── UI构建 ──────────────────────────────────────
+    def _sep(self) -> QFrame:
+        """水平细分隔线。"""
+        line = QFrame()
+        line.setFrameShape(QFrame.Shape.HLine)
+        line.setStyleSheet("color: #e0e0e0;")
+        return line
+
+    def _section_label(self, text: str) -> QLabel:
+        """小节标题标签。"""
+        lbl = QLabel(text)
+        lbl.setStyleSheet(
+            "font-size:10px; font-weight:bold; color:#7f8c8d; letter-spacing:0.5px;"
+        )
+        return lbl
+
     def _setup_ui(self):
-        layout = QVBoxLayout(self)
-        layout.setSpacing(8)
+        # 可滚动的根容器，防止小屏高度不够时内容被截断
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+
+        content = QWidget()
+        layout = QVBoxLayout(content)
+        layout.setSpacing(6)
         layout.setContentsMargins(10, 10, 10, 10)
 
-        # 顶部说明
-        info_label = QLabel(
-            "📖 <b>使用说明</b>：在弹出的浏览器中操作，"
-            "点击「进入拾取模式」后鼠标悬停高亮元素，左键单击即可捕获。"
-            "或点击「开始录制」自动记录您的操作。右键退出拾取/录制。"
-        )
-        info_label.setWordWrap(True)
-        info_label.setStyleSheet(
-            "background:#e8f4fd; padding:10px; border-radius:5px; color:#1a5276;"
-        )
-        layout.addWidget(info_label)
-
-        # URL输入区
-        url_group = QGroupBox("目标网页地址")
-        url_layout = QHBoxLayout(url_group)
-
+        # ── URL 区 ──────────────────────────────────
+        layout.addWidget(self._section_label("目标网址"))
+        url_row = QHBoxLayout()
+        url_row.setSpacing(4)
         self.url_input = QLineEdit()
-        self.url_input.setPlaceholderText("输入要打开的网页地址，例如：https://www.example.com")
+        self.url_input.setPlaceholderText("https://...")
         self.url_input.setText(self._initial_url)
-        url_layout.addWidget(self.url_input)
-
-        self.open_btn = QPushButton("🚀 打开浏览器")
-        self.open_btn.setFixedWidth(130)
+        url_row.addWidget(self.url_input, 1)
+        self.open_btn = QPushButton("打开")
+        self.open_btn.setFixedWidth(46)
         self.open_btn.clicked.connect(self._start_picker)
-        url_layout.addWidget(self.open_btn)
+        url_row.addWidget(self.open_btn)
+        layout.addLayout(url_row)
 
-        layout.addWidget(url_group)
+        layout.addWidget(self._sep())
 
-        # 模式控制区
-        mode_group = QGroupBox("操作模式")
-        mode_layout = QHBoxLayout(mode_group)
-
-        self.pick_mode_btn = QPushButton("🔍 进入拾取模式")
+        # ── 模式按钮 ────────────────────────────────
+        layout.addWidget(self._section_label("操作模式"))
+        mode_row = QHBoxLayout()
+        mode_row.setSpacing(4)
+        self.pick_mode_btn = QPushButton("🔍 拾取")
         self.pick_mode_btn.setEnabled(False)
         self.pick_mode_btn.clicked.connect(self._toggle_pick_mode)
-        mode_layout.addWidget(self.pick_mode_btn)
-
-        self.record_btn = QPushButton("🎬 开始录制")
+        mode_row.addWidget(self.pick_mode_btn, 1)
+        self.record_btn = QPushButton("🎬 录制")
         self.record_btn.setEnabled(False)
         self.record_btn.clicked.connect(self._toggle_record_mode)
-        mode_layout.addWidget(self.record_btn)
+        mode_row.addWidget(self.record_btn, 1)
+        layout.addLayout(mode_row)
 
         self.reinject_btn = QPushButton("🔄 重新激活脚本")
         self.reinject_btn.setEnabled(False)
+        self.reinject_btn.setFixedHeight(24)
         self.reinject_btn.clicked.connect(self._reinject_and_reset)
-        mode_layout.addWidget(self.reinject_btn)
+        layout.addWidget(self.reinject_btn)
 
-        layout.addWidget(mode_group)
+        layout.addWidget(self._sep())
 
-        # 步骤类型选择
-        type_group = QGroupBox("步骤类型（拾取模式下使用）")
-        type_layout = QHBoxLayout(type_group)
-        type_layout.addWidget(QLabel("这个步骤要做什么："))
+        # ── 状态行 ──────────────────────────────────
+        self.desc_label = QLabel("等待浏览器启动…")
+        self.desc_label.setWordWrap(True)
+        self.desc_label.setStyleSheet("color:#7f8c8d; font-size:11px; font-style:italic;")
+        layout.addWidget(self.desc_label)
+
+        layout.addWidget(self._sep())
+
+        # ── 拾取结果区 ──────────────────────────────
+        layout.addWidget(self._section_label("拾取结果"))
+
+        layout.addWidget(QLabel("CSS 选择器"))
+        self.selector_input = QLineEdit()
+        self.selector_input.setPlaceholderText("点击元素后自动填入")
+        self.selector_input.setFont(QFont("Consolas", 9))
+        layout.addWidget(self.selector_input)
+
+        layout.addWidget(QLabel("步骤名称"))
+        self.step_name_input = QLineEdit()
+        self.step_name_input.setPlaceholderText("可选")
+        layout.addWidget(self.step_name_input)
+
+        layout.addWidget(QLabel("步骤类型"))
         self.step_type_combo = QComboBox()
         for step_type, label in STEP_TYPE_LABELS.items():
             if step_type != StepType.OPEN_URL:
                 self.step_type_combo.addItem(label, step_type)
         self.step_type_combo.currentIndexChanged.connect(self._on_step_type_changed)
-        type_layout.addWidget(self.step_type_combo, 1)
-        layout.addWidget(type_group)
+        layout.addWidget(self.step_type_combo)
 
-        # 捕获结果显示区
-        result_group = QGroupBox("📍 捕获到的元素信息（拾取模式）")
-        result_layout = QVBoxLayout(result_group)
-
-        desc_row = QHBoxLayout()
-        desc_row.addWidget(QLabel("状态："))
-        self.desc_label = QLabel("等待浏览器启动...")
-        self.desc_label.setStyleSheet("color:#666; font-style:italic;")
-        desc_row.addWidget(self.desc_label, 1)
-        result_layout.addLayout(desc_row)
-
-        sel_row = QHBoxLayout()
-        sel_row.addWidget(QLabel("CSS选择器："))
-        self.selector_input = QLineEdit()
-        self.selector_input.setPlaceholderText("点击网页元素后自动填入，也可手动修改")
-        self.selector_input.setFont(QFont("Consolas", 10))
-        sel_row.addWidget(self.selector_input, 1)
-        result_layout.addLayout(sel_row)
-
-        name_row = QHBoxLayout()
-        name_row.addWidget(QLabel("步骤名称："))
-        self.step_name_input = QLineEdit()
-        self.step_name_input.setPlaceholderText("给这个步骤起个名字（可选）")
-        name_row.addWidget(self.step_name_input, 1)
-        result_layout.addLayout(name_row)
-
-        self.value_row = QHBoxLayout()
-        self.value_label = QLabel("输入内容：")
-        self.value_row.addWidget(self.value_label)
+        self.value_label = QLabel("输入内容")
+        layout.addWidget(self.value_label)
         self.value_input = QLineEdit()
-        self.value_input.setPlaceholderText("支持 [TODAY]、[TODAY-1] 等时间占位符")
-        self.value_row.addWidget(self.value_input, 1)
-        result_layout.addLayout(self.value_row)
+        self.value_input.setPlaceholderText("[TODAY] [TODAY-1] [MONTH_START]…")
+        layout.addWidget(self.value_input)
 
-        self.var_hint = QLabel(
-            "💡 [TODAY]=今天  [TODAY-1]=昨天  [TODAY-7]=7天前  "
-            "[MONTH_START]=本月初  [MONTH_END]=本月末"
-        )
-        self.var_hint.setStyleSheet("color:#666; font-size:11px;")
+        self.var_hint = QLabel("💡 [TODAY] [TODAY-1] [MONTH_START] [MONTH_END]")
         self.var_hint.setWordWrap(True)
-        result_layout.addWidget(self.var_hint)
+        self.var_hint.setStyleSheet("color:#95a5a6; font-size:10px;")
+        layout.addWidget(self.var_hint)
 
-        add_single_btn = QPushButton("✅ 添加此步骤到任务")
-        add_single_btn.setStyleSheet(
-            "QPushButton{background:#27ae60;color:white;font-weight:bold;"
-            "border-radius:4px;padding:6px 16px;border:none;}"
-            "QPushButton:hover{background:#2ecc71;}"
-        )
+        add_single_btn = QPushButton("✅ 添加此步骤")
+        add_single_btn.setObjectName("addBtn")
         add_single_btn.clicked.connect(self._add_step)
-        result_layout.addWidget(add_single_btn)
+        layout.addWidget(add_single_btn)
 
-        layout.addWidget(result_group)
+        layout.addWidget(self._sep())
 
-        # 录制结果区
-        record_group = QGroupBox("📼 录制结果（录制模式）")
-        record_layout = QVBoxLayout(record_group)
+        # ── 录制结果区 ──────────────────────────────
+        rec_header = QHBoxLayout()
+        rec_header.addWidget(self._section_label("录制结果"))
+        rec_header.addStretch()
+        self.rec_count_label = QLabel("0 步")
+        self.rec_count_label.setStyleSheet("font-size:10px; color:#7f8c8d;")
+        rec_header.addWidget(self.rec_count_label)
+        layout.addLayout(rec_header)
 
         self.record_list = QListWidget()
         self.record_list.setAlternatingRowColors(True)
-        self.record_list.setSelectionMode(
-            QListWidget.SelectionMode.ExtendedSelection
-        )
+        self.record_list.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
         self.record_list.setDragDropMode(QListWidget.DragDropMode.InternalMove)
-        self.record_list.itemSelectionChanged.connect(
-            self._update_record_selection_buttons
-        )
-        self.record_list.setMinimumHeight(120)
-        self.record_list.setMaximumHeight(160)
-        record_layout.addWidget(self.record_list)
+        self.record_list.itemSelectionChanged.connect(self._update_record_selection_buttons)
+        self.record_list.setMinimumHeight(80)
+        self.record_list.setMaximumHeight(200)
+        self.record_list.setStyleSheet("font-size:11px;")
+        layout.addWidget(self.record_list)
 
-        record_btn_row = QHBoxLayout()
-
-        self.add_recorded_btn = QPushButton("✅ 添加录制步骤到任务")
+        rec_btns = QHBoxLayout()
+        rec_btns.setSpacing(4)
+        self.add_recorded_btn = QPushButton("✅ 全部添加")
         self.add_recorded_btn.setEnabled(False)
-        self.add_recorded_btn.setStyleSheet(
-            "QPushButton{background:#2980b9;color:white;font-weight:bold;"
-            "border-radius:4px;border:none;}"
-            "QPushButton:hover{background:#3498db;}"
-            "QPushButton:disabled{background:#bdc3c7;}"
-        )
+        self.add_recorded_btn.setObjectName("addBtn")
         self.add_recorded_btn.clicked.connect(self._add_recorded_steps)
-        record_btn_row.addWidget(self.add_recorded_btn)
-
-        self.remove_selected_btn = QPushButton("🗑 删除选中")
+        rec_btns.addWidget(self.add_recorded_btn, 1)
+        self.remove_selected_btn = QPushButton("🗑")
         self.remove_selected_btn.setEnabled(False)
+        self.remove_selected_btn.setFixedWidth(32)
+        self.remove_selected_btn.setToolTip("删除选中")
         self.remove_selected_btn.clicked.connect(self._remove_selected_recorded_actions)
-        record_btn_row.addWidget(self.remove_selected_btn)
-
-        clear_btn = QPushButton("🧹 清空")
+        rec_btns.addWidget(self.remove_selected_btn)
+        clear_btn = QPushButton("清空")
+        clear_btn.setFixedWidth(40)
         clear_btn.clicked.connect(self._clear_recorded_actions)
-        record_btn_row.addWidget(clear_btn)
+        rec_btns.addWidget(clear_btn)
+        layout.addLayout(rec_btns)
 
-        record_layout.addLayout(record_btn_row)
-        layout.addWidget(record_group)
+        layout.addWidget(self._sep())
 
-        # 底部关闭按钮
-        bottom_row = QHBoxLayout()
-        bottom_row.addStretch()
-        close_btn = QPushButton("关闭拾取窗口")
-        close_btn.setFixedHeight(36)
+        # ── 底部关闭 ────────────────────────────────
+        close_btn = QPushButton("关闭")
+        close_btn.setFixedHeight(30)
         close_btn.clicked.connect(self.close)
-        bottom_row.addWidget(close_btn)
-        layout.addLayout(bottom_row)
+        layout.addWidget(close_btn)
+
+        layout.addStretch()
+        scroll.setWidget(content)
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.addWidget(scroll)
 
         self._on_step_type_changed()
 
     def _apply_styles(self):
         self.setStyleSheet("""
-            QDialog { background: #f5f6fa; }
-            QGroupBox {
-                font-weight: bold;
-                border: 1px solid #ddd;
-                border-radius: 5px;
-                margin-top: 8px;
-                padding-top: 5px;
-            }
-            QGroupBox::title {
-                subcontrol-origin: margin;
-                left: 10px;
-                padding: 0 5px;
-            }
+            QWidget { background: #f8f9fa; font-size: 12px; }
+            QScrollArea { background: #f8f9fa; }
             QLineEdit {
-                border: 1px solid #ccc;
+                border: 1px solid #d0d0d0;
                 border-radius: 4px;
-                padding: 5px;
+                padding: 4px 6px;
                 background: white;
             }
             QLineEdit:focus { border-color: #3498db; }
             QPushButton {
-                border: 1px solid #bbb;
+                border: 1px solid #c8c8c8;
                 border-radius: 4px;
-                padding: 5px 12px;
+                padding: 4px 8px;
                 background: #ecf0f1;
+                font-size: 12px;
             }
-            QPushButton:hover { background: #d5dbdb; }
-            QPushButton:disabled { color: #aaa; background: #f0f0f0; }
+            QPushButton:hover { background: #dde4e6; }
+            QPushButton:disabled { color: #b0b0b0; background: #f0f0f0; border-color: #ddd; }
+            QPushButton#addBtn {
+                background: #27ae60; color: white;
+                font-weight: bold; border: none;
+            }
+            QPushButton#addBtn:hover { background: #2ecc71; }
+            QPushButton#addBtn:disabled { background: #95a5a6; }
+            QComboBox {
+                border: 1px solid #d0d0d0;
+                border-radius: 4px;
+                padding: 3px 6px;
+                background: white;
+            }
             QListWidget {
                 border: 1px solid #ddd;
                 border-radius: 4px;
                 background: white;
+                alternate-background-color: #f8f9fa;
             }
-            QListWidget::item { padding: 4px 8px; }
+            QListWidget::item { padding: 3px 6px; }
             QListWidget::item:selected { background: #d6eaf8; color: #1a5276; }
-            QListWidget::item:alternate { background: #f8f9fa; }
         """)
 
     # ── 浏览器控制 ──────────────────────────────────
@@ -765,6 +779,7 @@ class VisualPickerWindow(QDialog):
         self.record_list.addItem(item)
         self._recorded_actions.append(step)
         self.add_recorded_btn.setEnabled(True)
+        self.rec_count_label.setText(f"{self.record_list.count()} 步")
 
     def _add_recorded_steps(self):
         count = 0
@@ -793,6 +808,7 @@ class VisualPickerWindow(QDialog):
             if isinstance(step, Step):
                 self._recorded_actions.append(step)
         self.add_recorded_btn.setEnabled(self.record_list.count() > 0)
+        self.rec_count_label.setText(f"{self.record_list.count()} 步")
         self._update_record_selection_buttons()
 
     def _update_record_selection_buttons(self):
@@ -805,6 +821,7 @@ class VisualPickerWindow(QDialog):
         self.record_list.clear()
         self.add_recorded_btn.setEnabled(False)
         self.remove_selected_btn.setEnabled(False)
+        self.rec_count_label.setText("0 步")
 
     # ── 步骤手动添加 ────────────────────────────────
     def _on_step_type_changed(self):

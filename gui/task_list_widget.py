@@ -57,7 +57,7 @@ class TaskCard(QFrame):
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum
         )
         root = QVBoxLayout(self)
-        root.setContentsMargins(16, 10, 16, 10)
+        root.setContentsMargins(12, 8, 12, 8)
         root.setSpacing(6)
 
         # 第一行：状态条 + 信息 + 按钮
@@ -78,7 +78,7 @@ class TaskCard(QFrame):
         name_row = QHBoxLayout()
         self.name_label = QLabel(self.task.name)
         self.name_label.setStyleSheet(
-            "font-size:15px; font-weight:bold; color:#2c3e50;"
+            "font-size:14px; font-weight:bold; color:#2c3e50;"
         )
         name_row.addWidget(self.name_label)
 
@@ -125,7 +125,7 @@ class TaskCard(QFrame):
         is_running = self.task.last_run_status == "running"
 
         self._stop_btn = QPushButton("⏹ 停止")
-        self._stop_btn.setFixedSize(110, 30)
+        self._stop_btn.setFixedSize(88, 28)
         self._stop_btn.setStyleSheet(
             "QPushButton{background:#e74c3c;color:white;border-radius:4px;"
             "font-weight:bold;border:none;}"
@@ -138,7 +138,7 @@ class TaskCard(QFrame):
         btn_col.addWidget(self._stop_btn)
 
         self._run_btn = QPushButton("▶ 立即执行 ▼")
-        self._run_btn.setFixedSize(110, 30)
+        self._run_btn.setFixedSize(88, 28)
         self._run_btn.setStyleSheet(
             "QPushButton{background:#27ae60;color:white;border-radius:4px;"
             "font-weight:bold;border:none;padding-left:6px;}"
@@ -149,7 +149,7 @@ class TaskCard(QFrame):
         btn_col.addWidget(self._run_btn)
 
         edit_btn = QPushButton("✏️ 编辑")
-        edit_btn.setFixedSize(110, 30)
+        edit_btn.setFixedSize(88, 28)
         edit_btn.setStyleSheet(
             "QPushButton{background:#3498db;color:white;border-radius:4px;"
             "font-weight:bold;border:none;}"
@@ -161,7 +161,7 @@ class TaskCard(QFrame):
         btn_col.addWidget(edit_btn)
 
         share_btn = QPushButton("🔗 分享")
-        share_btn.setFixedSize(110, 30)
+        share_btn.setFixedSize(88, 28)
         share_btn.setStyleSheet(
             "QPushButton{background:#9b59b6;color:white;border-radius:4px;"
             "font-weight:bold;border:none;}"
@@ -173,7 +173,7 @@ class TaskCard(QFrame):
         btn_col.addWidget(share_btn)
 
         del_btn = QPushButton("🗑 删除")
-        del_btn.setFixedSize(110, 30)
+        del_btn.setFixedSize(88, 28)
         del_btn.setStyleSheet(
             "QPushButton{background:#ecf0f1;color:#e74c3c;border-radius:4px;"
             "border:1px solid #e74c3c;}"
@@ -208,7 +208,7 @@ class TaskCard(QFrame):
         """)
         self.progress_label = QLabel("准备中...")
         self.progress_label.setStyleSheet("color:#7f8c8d; font-size:11px;")
-        self.progress_label.setFixedWidth(220)
+        self.progress_label.setFixedWidth(180)
 
         pw_layout.addWidget(self.progress_bar)
         pw_layout.addWidget(self.progress_label)
@@ -222,7 +222,7 @@ class TaskCard(QFrame):
         ss_layout.setSpacing(12)
 
         self.screenshot_label = QLabel("等待截图...")
-        self.screenshot_label.setFixedSize(240, 135)
+        self.screenshot_label.setFixedSize(192, 108)
         self.screenshot_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.screenshot_label.setStyleSheet(
             "background:#1e1e2e; color:#666; border-radius:4px;"
@@ -235,7 +235,7 @@ class TaskCard(QFrame):
         hint = QLabel(
             "🖥️ 浏览器实时画面\n（每4秒自动刷新）\n\n点击截图可放大查看"
         )
-        hint.setStyleSheet("color:#7f8c8d; font-size:11px;")
+        hint.setStyleSheet("color:#7f8c8d; font-size:10px;")
         ss_layout.addWidget(hint)
         ss_layout.addStretch()
 
@@ -277,7 +277,7 @@ class TaskCard(QFrame):
             pixmap = QPixmap.fromImage(image)
             self._current_pixmap = pixmap
             scaled = pixmap.scaled(
-                240, 135,
+                192, 108,
                 Qt.AspectRatioMode.KeepAspectRatio,
                 Qt.TransformationMode.SmoothTransformation
             )
