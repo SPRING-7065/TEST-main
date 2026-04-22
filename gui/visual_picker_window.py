@@ -200,10 +200,12 @@ class PickerThread(QThread):
             import platform as _plt
             if _plt.system() == 'Windows':
                 # 便携版Chromium在Windows上硬件GPU初始化失败会白屏
-                # 需要禁用GPU让其回退到SwiftShader软件渲染，同时关闭沙箱
+                # 需明确指定SwiftShader为GL后端并禁用GPU合成器，否则--disable-gpu不够
                 options.set_argument('--no-sandbox')
                 options.set_argument('--disable-gpu-sandbox')
                 options.set_argument('--disable-gpu')
+                options.set_argument('--use-gl=swiftshader')
+                options.set_argument('--disable-gpu-compositing')
             else:
                 options.set_argument('--no-sandbox')
                 options.set_argument('--disable-dev-shm-usage')

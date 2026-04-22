@@ -44,8 +44,10 @@ def get_chromium_path() -> Optional[str]:
             return path
     return None
 
-def get_cache_dir() -> str:
-    cache_dir = os.path.join(get_app_root(), "browser_cache")
+def get_cache_dir(debug: bool = False) -> str:
+    # 调试模式和无头模式使用独立缓存目录，避免GPU缓存文件相互污染
+    name = "browser_cache_debug" if debug else "browser_cache"
+    cache_dir = os.path.join(get_app_root(), name)
     os.makedirs(cache_dir, exist_ok=True)
     return cache_dir
 
@@ -207,7 +209,7 @@ class ExecutionEngine:
         options.no_imgs(False)
         options.mute(True)
 
-        cache_dir = get_cache_dir()
+        cache_dir = get_cache_dir(debug=self.debug_mode)
         options.set_user_data_path(cache_dir)
         self._log(f"  💾 使用持久化缓存：{cache_dir}")
 
@@ -226,12 +228,13 @@ class ExecutionEngine:
             options.set_argument('--no-sandbox')
             options.set_argument('--disable-gpu-sandbox')
             if self.debug_mode:
-                # 调试模式可见窗口：便携Chromium硬件GPU初始化失败导致白屏
-                # 禁用硬件GPU，让Chromium回退到SwiftShader软件渲染
+                # 调试模式可见窗口：仅 --disable-gpu 不足以阻止 GPU 进程尝试初始化
+                # 必须显式指定 SwiftShader 作为 GL 后端，并禁用 GPU 合成器
+                # 否则 Chromium 在初始化失败后仍会呈现白屏而不报错
                 options.set_argument('--disable-gpu')
+                options.set_argument('--use-gl=swiftshader')
+                options.set_argument('--disable-gpu-compositing')
             # 无头模式下 --disable-gpu 已在上方 else 分支设置，此处不再重复
-            # 注：之前此处有 --disable-software-rasterizer，与 --disable-gpu 同时存在
-            # 会把硬件和软件渲染全部禁掉，导致截图全白，已删除
         else:
             options.set_argument('--no-sandbox')
             options.set_argument('--disable-dev-shm-usage')
