@@ -18,11 +18,13 @@ from PySide6.QtGui import QIcon, QFont, QTextCursor, QColor, QAction
  
 from models.task import Task
 from storage.task_store import load_tasks, save_tasks, update_task_status
-from core import logger
+from storage.settings_store import load_settings
+from core import logger, concurrency
 from core.scheduler import TaskScheduler
-from core.engine import run_task_in_thread
+from core.engine import run_task_in_thread, migrate_legacy_cache_if_needed
 from gui.task_list_widget import TaskListWidget
 from gui.help_widget import HelpWidget
+from gui.settings_widget import SettingsWidget
  
 class LogSignalBridge(QObject):
     """
@@ -36,13 +38,20 @@ class MainWindow(QMainWindow):
  
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("🤖 网页自动取数助手 v1.1.3")
+        self.setWindowTitle("🤖 网页自动取数助手 v1.1.4")
         self.setMinimumSize(900, 560)
         self.resize(1100, 700)
 
         # 数据
         self._tasks: List[Task] = load_tasks()
         self._running_tasks = {}  # task_id -> TaskThreadWrapper
+
+        # 应用设置（先于调度器/引擎初始化，确保并发上限就位）
+        self._settings = load_settings()
+        concurrency.set_limit(self._settings.get("concurrency_limit", 2))
+
+        # 一次性迁移老的共享 browser_cache 到首个任务的子目录，保留登录态
+        migrate_legacy_cache_if_needed([t.task_id for t in self._tasks])
  
         # 日志信号桥（确保跨线程安全）
         self._log_bridge = LogSignalBridge()
@@ -100,6 +109,11 @@ class MainWindow(QMainWindow):
         log_tab = self._build_log_tab()
         main_tabs.addTab(log_tab, "📜\n运行\n日志")
  
+        # Tab: 设置
+        self._settings_tab = SettingsWidget()
+        self._settings_tab.settings_changed.connect(self._on_setting_changed)
+        main_tabs.addTab(self._settings_tab, "⚙️\n设置")
+
         # Tab: 使用帮助
         help_tab = HelpWidget()
         main_tabs.addTab(help_tab, "❓\n使用\n帮助")
@@ -411,6 +425,12 @@ class MainWindow(QMainWindow):
         for task in self._tasks:
             self._run_task_by_id(task.task_id)
  
+    def _on_setting_changed(self, key: str, value):
+        """设置面板改动时触发，目前并发上限已在 SettingsWidget 内部直接生效"""
+        self._settings[key] = value
+        if key == "concurrency_limit":
+            logger.log_info(f"并发上限已更新为 {value}")
+
     def _stop_task(self, task_id: str):
         """停止正在运行的任务"""
         task = self._find_task(task_id)

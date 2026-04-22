@@ -66,6 +66,16 @@ class HelpWidget(QWidget):
 
     def _build_quickstart_tab(self) -> QWidget:
         content = """
+<div style="background:#fff3cd; padding:14px; border-radius:8px;
+            border-left:5px solid #f0ad4e; margin:0 0 16px 0;">
+<b style="font-size:14px; color:#856404;">🟢 前置依赖（必读）</b><br><br>
+本程序<b>不再内置浏览器</b>，需要您的电脑已经安装 <b>Google Chrome</b>。
+如果还没装，请到
+<a href="https://www.google.cn/chrome/">https://www.google.cn/chrome/</a>
+下载安装。<br><br>
+<i>程序会自动调用系统已安装的 Chrome（标准安装路径），无需配置。</i>
+</div>
+
 <h2 style="color:#2980b9; margin-top:0;">🚀 5步快速上手</h2>
 
 <div style="background:#eafaf1; padding:15px; border-radius:8px;
@@ -476,9 +486,50 @@ A：右键点击程序的 .exe 文件 → 发送到 → 桌面快捷方式。<br
 <div style="background:#fef9e7; padding:15px; border-radius:8px;
             border-left:5px solid #f39c12; margin:12px 0;">
 <b style="font-size:14px;">Q：多个任务同时执行会不会冲突？</b><br><br>
-A：每个任务使用独立的后台浏览器实例，互不干扰，可以同时执行多个任务。
-但请注意：同一个任务同一时间只会运行一个实例，
-如果上一次还没执行完，调度器不会重复触发。
+A：每个任务使用<b>独立的浏览器用户配置目录</b>（<code>browser_cache/{任务ID}/</code>），
+互不干扰，可以同时执行多个任务。但请注意：同一个任务同一时间只会运行一个实例，
+如果上一次还没执行完，调度器不会重复触发。<br><br>
+全局<b>并发上限</b>由「⚙️ 设置」Tab 控制，默认 2 个，详见下一条。
+</div>
+
+<div style="background:#eaf2ff; padding:15px; border-radius:8px;
+            border-left:5px solid #3498db; margin:12px 0;">
+<b style="font-size:14px;">Q：并发执行多少个任务比较合适？</b><br><br>
+A：到「⚙️ 设置」Tab 调整「同时最多执行任务数」。每个任务约占
+<b>300-500MB 内存 + 1 个 CPU 核心</b>。粗略对应关系：<br>
+&nbsp;&nbsp;• <b>4-8GB 内存 / 老旧 CPU</b>：建议 1<br>
+&nbsp;&nbsp;• <b>8-16GB / i5-i7</b>：默认 2 即可<br>
+&nbsp;&nbsp;• <b>16GB / i7-7700 这一档</b>：3-4 是甜蜜点<br>
+&nbsp;&nbsp;• <b>32GB+ / i9</b>：5+<br>
+集成显卡（如 HD 630）超过 4 个浏览器并发可能出现渲染白屏，请适度降低。
+</div>
+
+<div style="background:#e8f8f5; padding:15px; border-radius:8px;
+            border-left:5px solid #1abc9c; margin:12px 0;">
+<b style="font-size:14px;">Q：登录态怎么保持？每次都要重新登录吗？</b><br><br>
+A：当前版本每个任务的 cookie / localStorage 会持久化在
+<code>browser_cache/{任务ID}/</code> 目录中，<b>同一个任务下次执行会复用登录态</b>，
+不需要每次重新登录。<br><br>
+但 OA / SSO 系统通常会有<b>会话过期</b>（一般 8-24 小时一次），
+过期后还是要重新登录一次。<br><br>
+<i>📌 下个版本（v1.2.0）将支持「登录模板」——录制一次登录流程后，
+任务执行时自动检测登录状态、自动回放登录动作（密码用系统密钥库加密保存）。</i>
+</div>
+
+<div style="background:#fdecea; padding:15px; border-radius:8px;
+            border-left:5px solid #e74c3c; margin:12px 0;">
+<b style="font-size:14px;">Q：调试模式打开浏览器后是空白的（白屏），怎么办？</b><br><br>
+A：本程序使用您系统已安装的 Chrome，正常情况下不会白屏。
+如果遇到，多半是 <b>企业终端管控软件 / 杀毒软件</b> 拦截了浏览器进程的
+某些子进程或网络访问，常见于公司发的电脑。<br><br>
+<b>排查步骤：</b><br>
+&nbsp;&nbsp;① 浏览器地址栏访问 <code>chrome://gpu</code>，
+看 "Compositing" 一行：是绿字 → 渲染没问题；红字 → 显卡/驱动问题<br>
+&nbsp;&nbsp;② 直接打开 Chrome 访问几个普通网站
+（百度、example.com）和你的内网，看是否都能正常打开<br>
+&nbsp;&nbsp;③ 如果访问外网被重定向到一个无 logo 的"您被禁止访问互联网"页，
+基本就是公司管控，需要联系 IT 加入白名单<br>
+&nbsp;&nbsp;④ 排除杀毒软件：临时关掉 360 / 火绒 / 腾讯电脑管家测试
 </div>
 """
         return self._make_scroll_tab(content)

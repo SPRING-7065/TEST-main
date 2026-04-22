@@ -14,11 +14,12 @@ from PySide6.QtGui import QPixmap, QImage
 from models.task import Task
 
 STATUS_CONFIG = {
-    "never":   {"text": "从未执行",    "color": "#95a5a6", "bg": "#ecf0f1"},
-    "running": {"text": "⚙️ 执行中...", "color": "#e67e22", "bg": "#fef9e7"},
-    "success": {"text": "✅ 上次成功",  "color": "#27ae60", "bg": "#eafaf1"},
-    "failed":  {"text": "❌ 上次失败",  "color": "#e74c3c", "bg": "#fdedec"},
-    "stopped": {"text": "⏹ 已停止",    "color": "#7f8c8d", "bg": "#f2f3f4"},
+    "never":   {"text": "从未执行",     "color": "#95a5a6", "bg": "#ecf0f1"},
+    "queued":  {"text": "⏳ 等待槽位...", "color": "#8e44ad", "bg": "#f4ecf7"},
+    "running": {"text": "⚙️ 执行中...",  "color": "#e67e22", "bg": "#fef9e7"},
+    "success": {"text": "✅ 上次成功",   "color": "#27ae60", "bg": "#eafaf1"},
+    "failed":  {"text": "❌ 上次失败",   "color": "#e74c3c", "bg": "#fdedec"},
+    "stopped": {"text": "⏹ 已停止",     "color": "#7f8c8d", "bg": "#f2f3f4"},
 }
 
 class ScreenshotDialog(QDialog):
@@ -122,7 +123,7 @@ class TaskCard(QFrame):
         # 右侧按钮
         btn_col = QVBoxLayout()
         btn_col.setSpacing(5)
-        is_running = self.task.last_run_status == "running"
+        is_running = self.task.last_run_status in ("running", "queued")
 
         self._stop_btn = QPushButton("⏹ 停止")
         self._stop_btn.setFixedSize(88, 28)
@@ -298,7 +299,7 @@ class TaskCard(QFrame):
 
     def refresh_status(self):
         """任务完成后刷新按钮状态和状态标签"""
-        is_running = self.task.last_run_status == "running"
+        is_running = self.task.last_run_status in ("running", "queued")
         self._stop_btn.setVisible(is_running)
         self._run_btn.setVisible(not is_running)
         status_cfg = STATUS_CONFIG.get(

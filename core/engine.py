@@ -45,12 +45,59 @@ CHROME_NOT_FOUND_MSG = (
     "https://www.google.cn/chrome/"
 )
 
-def get_cache_dir(debug: bool = False) -> str:
-    # 调试模式和无头模式使用独立缓存目录，避免GPU缓存文件相互污染
+def get_cache_dir(debug: bool = False, task_id: Optional[str] = None) -> str:
+    """按任务隔离的浏览器用户数据目录。
+
+    多任务并发时必须隔离，否则 Chromium 会因 user-data-dir 锁冲突而失败。
+    路径形如 browser_cache/{task_id}/  或  browser_cache_debug/{task_id}/
+    未传 task_id 时回退到根目录（向后兼容，不应在并发场景使用）。
+    """
     name = "browser_cache_debug" if debug else "browser_cache"
-    cache_dir = os.path.join(get_app_root(), name)
+    base = os.path.join(get_app_root(), name)
+    cache_dir = os.path.join(base, task_id) if task_id else base
     os.makedirs(cache_dir, exist_ok=True)
     return cache_dir
+
+
+def migrate_legacy_cache_if_needed(task_ids: list) -> None:
+    """v1.1.4 升级一次性迁移：把老的 browser_cache/Default/ 等
+    Chromium 配置目录搬到第一个任务的子目录下，保留登录态。
+    搬完原目录加 `_legacy_<时间戳>` 后缀备份不删。
+    """
+    import time as _time
+    if not task_ids:
+        return
+    for name in ("browser_cache", "browser_cache_debug"):
+        legacy_dir = os.path.join(get_app_root(), name)
+        if not os.path.isdir(legacy_dir):
+            continue
+        # 老格式特征：根目录下直接含有 Chromium 的 Default/ 或 Local State
+        has_default = os.path.isdir(os.path.join(legacy_dir, "Default"))
+        has_local_state = os.path.isfile(os.path.join(legacy_dir, "Local State"))
+        if not (has_default or has_local_state):
+            continue
+        first_task_id = task_ids[0]
+        target_dir = os.path.join(legacy_dir, first_task_id)
+        if os.path.exists(target_dir):
+            continue  # 已经迁移过
+        try:
+            os.makedirs(target_dir, exist_ok=True)
+            for entry in os.listdir(legacy_dir):
+                # 已经是 task_id 子目录的就别动
+                if entry in task_ids:
+                    continue
+                src = os.path.join(legacy_dir, entry)
+                dst = os.path.join(target_dir, entry)
+                if not os.path.exists(dst):
+                    os.rename(src, dst)
+            # 备份标记
+            backup_marker = os.path.join(
+                legacy_dir, f"_migrated_to_{first_task_id}_{int(_time.time())}.txt"
+            )
+            with open(backup_marker, "w", encoding="utf-8") as f:
+                f.write(f"Migrated legacy cache to subdir: {first_task_id}\n")
+        except Exception:
+            pass
 
 class TaskExecutionError(Exception):
     pass
@@ -213,7 +260,7 @@ class ExecutionEngine:
         options.no_imgs(False)
         options.mute(True)
 
-        cache_dir = get_cache_dir(debug=self.debug_mode)
+        cache_dir = get_cache_dir(debug=self.debug_mode, task_id=self.task.task_id)
         options.set_user_data_path(cache_dir)
         self._log(f"  💾 使用持久化缓存：{cache_dir}")
 
@@ -641,7 +688,15 @@ def run_task_in_thread(
     )
 
     def _run():
-        success = engine.execute()
+        from core import concurrency
+        # 等待并发槽位（超出上限时排队，UI 上任务会停留在 running 前的 queued 状态）
+        if status_callback:
+            status_callback(task.task_id, "queued")
+        concurrency.acquire()
+        try:
+            success = engine.execute()
+        finally:
+            concurrency.release()
         if completion_callback:
             completion_callback(task.task_id, success)
 

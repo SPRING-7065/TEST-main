@@ -172,6 +172,44 @@ PICKER_JS = """
 })();
 """
 
+# 顶部黄色警告横幅：浏览器就绪后立即注入，提醒用户去控制台开启录制/拾取。
+# 用户进入任一模式后自动隐藏；用户也可点 × 主动关闭。
+WARN_BANNER_JS = """
+(function() {
+    if (window.__webAutoWarnInjected) return;
+    window.__webAutoWarnInjected = true;
+    window.__webAutoWarnDismissed = false;
+
+    var warn = document.createElement('div');
+    warn.id = '__webAutoWarn';
+    warn.style.cssText = 'position:fixed;top:0;left:0;right:0;' +
+        'background:linear-gradient(135deg,#f39c12,#e67e22);color:white;' +
+        'text-align:center;padding:14px 50px 14px 16px;font-size:15px;' +
+        'font-weight:bold;z-index:9999998;font-family:Microsoft YaHei,sans-serif;' +
+        'box-shadow:0 2px 12px rgba(0,0,0,0.35);';
+    warn.innerHTML = '\u26A0\uFE0F \u5F55\u5236\u672A\u5F00\u542F \u2014 ' +
+        '\u8BF7\u5230\u53F3\u4FA7\u201C\uD83C\uDFAF \u62FE\u53D6\u63A7\u5236\u53F0\u201D\u70B9\u51FB' +
+        '\u300C\uD83C\uDFAC \u5F00\u59CB\u5F55\u5236\u300D\u6216\u300C\uD83C\uDFAF \u8FDB\u5165\u62FE\u53D6\u300D' +
+        '<span id="__webAutoWarnClose" style="position:absolute;right:14px;top:50%;' +
+        'transform:translateY(-50%);cursor:pointer;background:rgba(0,0,0,0.25);' +
+        'border-radius:50%;width:26px;height:26px;display:inline-flex;' +
+        'align-items:center;justify-content:center;font-size:18px;line-height:1;">\u00D7</span>';
+    document.body.appendChild(warn);
+
+    document.getElementById('__webAutoWarnClose').onclick = function(e){
+        e.stopPropagation();
+        warn.style.display = 'none';
+        window.__webAutoWarnDismissed = true;
+    };
+
+    setInterval(function(){
+        if (window.__webAutoWarnDismissed) return;
+        var active = window.__webAutoPickerActive || window.__webAutoRecorderActive;
+        warn.style.display = active ? 'none' : '';
+    }, 300);
+})();
+"""
+
 class PickerThread(QThread):
     element_picked = Signal(dict)
     action_recorded = Signal(dict)
@@ -248,6 +286,13 @@ class PickerThread(QThread):
                                 "window.__webAutoPickerActive = false;"
                                 "window.__pickerExitRequested = false;"
                             )
+
+                    # 警告横幅：跨页跳转后同样自动重注（用户主动 × 关闭过的不再显示）
+                    warn_injected = self._page.run_js(
+                        "return window.__webAutoWarnInjected || false;"
+                    )
+                    if not warn_injected:
+                        self._page.run_js(WARN_BANNER_JS)
 
                     picked = self._page.run_js(
                         "var r = window.__lastPickedElement; window.__lastPickedElement = null; return r;"

@@ -613,8 +613,52 @@ class TaskEditorDialog(QDialog):
             return
 
         self._picker_window = VisualPickerWindow(self, initial_url=initial_url)
+        self._picker_window.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
         self._picker_window.step_configured.connect(self._on_step_from_picker)
+        # picker 关闭后恢复主窗口/编辑器
+        self._picker_window.destroyed.connect(self._on_picker_destroyed)
         self._picker_window.show()
+
+        # 拾取/录制时自动让出视野（受设置控制，默认开）
+        try:
+            from storage.settings_store import get_setting
+            auto_min = get_setting("auto_minimize_on_picker")
+        except Exception:
+            auto_min = True
+        if auto_min:
+            # 编辑器先隐藏（非模态时它会抢层级、挡浏览器）
+            self.hide()
+            # 主窗口最小化
+            mw = self._find_main_window()
+            if mw is not None:
+                mw.showMinimized()
+
+    def _find_main_window(self):
+        """沿 parent 链找到 MainWindow（QMainWindow）"""
+        from PySide6.QtWidgets import QMainWindow
+        w = self.parent()
+        while w is not None:
+            if isinstance(w, QMainWindow):
+                return w
+            w = w.parent() if hasattr(w, "parent") else None
+        return None
+
+    def _on_picker_destroyed(self):
+        """picker 窗口关闭后恢复编辑器与主窗口"""
+        try:
+            self.show()
+            self.raise_()
+            self.activateWindow()
+        except Exception:
+            pass
+        mw = self._find_main_window()
+        if mw is not None:
+            try:
+                mw.showNormal()
+                mw.activateWindow()
+            except Exception:
+                pass
+        self._picker_window = None
 
     def _on_step_from_picker(self, step: Step):
         """接收来自可视化拾取窗口的步骤"""
