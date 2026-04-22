@@ -194,15 +194,18 @@ class ExecutionEngine:
         from DrissionPage import ChromiumPage, ChromiumOptions
 
         options = ChromiumOptions()
-        # 两种模式都使用相同窗口尺寸，确保元素坐标、响应式布局一致
-        # 无头模式不设置窗口尺寸时默认 800x600，会导致静默/调试行为不一致
-        options.set_argument('--window-size=1280,800')
+        # headless 必须最先设置，避免 DrissionPage 内部初始化逻辑在后续重置显示侧 flag
         if self.debug_mode:
             options.headless(False)
+        else:
+            options.headless(True)
+
+        # 两种模式都使用相同窗口尺寸，确保元素坐标、响应式布局一致
+        options.set_argument('--window-size=1280,800')
+        if self.debug_mode:
             options.set_argument('--window-position=50,50')
             self._log("  🖥️ 调试模式：浏览器窗口已打开，您可以实时观察执行过程")
         else:
-            options.headless(True)
             options.set_argument('--disable-gpu')
             options.set_argument('--force-device-scale-factor=1')
 
@@ -228,13 +231,23 @@ class ExecutionEngine:
             options.set_argument('--no-sandbox')
             options.set_argument('--disable-gpu-sandbox')
             if self.debug_mode:
-                # 调试模式可见窗口：仅 --disable-gpu 不足以阻止 GPU 进程尝试初始化
-                # 必须显式指定 SwiftShader 作为 GL 后端，并禁用 GPU 合成器
-                # 否则 Chromium 在初始化失败后仍会呈现白屏而不报错
+                # 可见窗口终极防白屏组合（基于 Gemini 深度 review 结论）：
+                # 1. --disable-gpu：禁用硬件 GPU 加速
+                # 2. --use-angle=swiftshader：现代 Chromium 通过 ANGLE 层渲染，
+                #    须指定 SwiftShader 作为 ANGLE 后端（--use-gl=swiftshader 是旧路径）
+                # 3. --disable-gpu-compositing：强制 CPU 执行图层合成，解决可见窗口白屏
+                # 4. --disable-gpu-shader-disk-cache：禁用磁盘缓存，防止首次 GPU 初始化
+                #    失败的错误状态写入缓存导致后续每次启动也白屏（缓存毒化）
+                # 5. --enable-unsafe-swiftshader：Chromium GPU 黑名单可能阻止 SwiftShader，
+                #    此 flag 强制允许其运行
                 options.set_argument('--disable-gpu')
-                options.set_argument('--use-gl=swiftshader')
+                options.set_argument('--use-angle=swiftshader')
                 options.set_argument('--disable-gpu-compositing')
-            # 无头模式下 --disable-gpu 已在上方 else 分支设置，此处不再重复
+                options.set_argument('--disable-gpu-shader-disk-cache')
+                options.set_argument('--enable-unsafe-swiftshader')
+            else:
+                # 无头模式：--disable-gpu 已在上方 else 分支设置；额外禁用缓存防毒化
+                options.set_argument('--disable-gpu-shader-disk-cache')
         else:
             options.set_argument('--no-sandbox')
             options.set_argument('--disable-dev-shm-usage')

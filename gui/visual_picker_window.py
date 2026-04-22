@@ -199,13 +199,14 @@ class PickerThread(QThread):
             options.set_argument('--disable-infobars')
             import platform as _plt
             if _plt.system() == 'Windows':
-                # 便携版Chromium在Windows上硬件GPU初始化失败会白屏
-                # 需明确指定SwiftShader为GL后端并禁用GPU合成器，否则--disable-gpu不够
+                # 与 engine.py 调试模式保持相同的终极防白屏组合
                 options.set_argument('--no-sandbox')
                 options.set_argument('--disable-gpu-sandbox')
                 options.set_argument('--disable-gpu')
-                options.set_argument('--use-gl=swiftshader')
+                options.set_argument('--use-angle=swiftshader')
                 options.set_argument('--disable-gpu-compositing')
+                options.set_argument('--disable-gpu-shader-disk-cache')
+                options.set_argument('--enable-unsafe-swiftshader')
             else:
                 options.set_argument('--no-sandbox')
                 options.set_argument('--disable-dev-shm-usage')
