@@ -1,0 +1,41 @@
+windows_container:
+  image: cirrusci/windowsservercore:2019
+  cpu: 4
+  memory: 8G
+
+build_task:
+  only_if: $CIRRUS_BRANCH == 'main'
+  timeout_in: 60m
+
+  env:
+    PYTHONIOENCODING: utf-8
+    PYTHONUTF8: "1"
+
+  install_python_script:
+    - choco install python --version=3.11.9 -y --no-progress
+
+  pip_cache:
+    folder: C:\Users\ContainerAdministrator\AppData\Local\pip\Cache
+    fingerprint_script: type requirements-dev.txt
+
+  install_deps_script:
+    - python -m pip install --upgrade pip
+    - python -m pip install -r requirements-dev.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
+
+  chromium_cache:
+    folder: browser
+    fingerprint_script: type download_chromium.py
+    populate_script: python download_chromium.py
+
+  check_syntax_script:
+    - python check_syntax.py
+
+  build_script:
+    - python -m PyInstaller build.spec --clean --noconfirm
+
+  package_script:
+    - python package_output.py
+
+  dist_artifacts:
+    path: "WebAutoDownloader_v*.zip"
+    type: application/zip
