@@ -38,7 +38,7 @@ class MainWindow(QMainWindow):
  
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("🤖 网页自动取数助手 v1.1.4")
+        self.setWindowTitle("🤖 网页自动取数助手 v1.1.5")
         self.setMinimumSize(900, 560)
         self.resize(1100, 700)
 
@@ -390,7 +390,9 @@ class MainWindow(QMainWindow):
                 tid, status,
                 datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             )
-            self._log_bridge.new_log.emit("__STATUS_UPDATE__")
+            # 携带 task_id：让 UI 只更新该任务卡片，不重建整个列表
+            # （v1.1.4 重建会清掉其他正在运行任务的截图/进度）
+            self._log_bridge.new_log.emit(f"__STATUS_UPDATE__{tid}")
 
         def on_completion(tid: str, success: bool):
             if tid in self._running_tasks:
@@ -466,9 +468,21 @@ class MainWindow(QMainWindow):
     @Slot(str)
     def _append_log_to_gui(self, message: str):
         """将日志追加到GUI文本框（主线程安全）"""
-        if message == "__STATUS_UPDATE__":
-            self._tasks = load_tasks()
-            self._task_list_widget.refresh_tasks(self._tasks)
+        if message.startswith("__STATUS_UPDATE__"):
+            tid = message.replace("__STATUS_UPDATE__", "", 1)
+            # 仅同步内存中该任务的状态字段，避免重建任务列表
+            from storage.task_store import load_tasks as _ld
+            disk_tasks = {t.task_id: t for t in _ld()}
+            for t in self._tasks:
+                disk_t = disk_tasks.get(t.task_id)
+                if disk_t is not None:
+                    t.last_run_status = disk_t.last_run_status
+                    t.last_run_time = disk_t.last_run_time
+            if tid:
+                self._task_list_widget.update_task_status_only(tid)
+            else:
+                # 兜底：旧消息格式无 task_id 时回退到全量刷新
+                self._task_list_widget.refresh_tasks(self._tasks)
             return
 
         if message.startswith("__CLEAR_RUNNING_UI__"):
@@ -543,9 +557,23 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "提示", "日志文件还不存在，运行任务后会自动生成")
  
     def _refresh_task_status(self):
-        """定期刷新任务状态显示"""
-        self._tasks = load_tasks()
-        self._task_list_widget.refresh_tasks(self._tasks)
+        """定期刷新任务状态显示
+        仅同步状态字段并精准更新对应卡片，不重建整个列表，
+        否则会清空正在运行任务的截图和进度。
+        """
+        disk_tasks = {t.task_id: t for t in load_tasks()}
+        changed_ids = []
+        for t in self._tasks:
+            disk_t = disk_tasks.get(t.task_id)
+            if disk_t is None:
+                continue
+            if (t.last_run_status != disk_t.last_run_status or
+                    t.last_run_time != disk_t.last_run_time):
+                t.last_run_status = disk_t.last_run_status
+                t.last_run_time = disk_t.last_run_time
+                changed_ids.append(t.task_id)
+        for tid in changed_ids:
+            self._task_list_widget.update_task_status_only(tid)
  
     # ─────────────────────────────────────────────
     # 窗口事件

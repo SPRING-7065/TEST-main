@@ -354,9 +354,31 @@ _PANEL_W = 260  # 侧边栏固定宽度
 
 
 class VisualPickerWindow(QWidget):
-    """拾取/录制侧边栏，固定 260px 宽，始终置顶，自动停靠屏幕右侧。"""
+    """拾取/录制侧边栏，固定 260px 宽，始终置顶，自动停靠屏幕右侧。
+
+    全局唯一：同一时刻只允许一个 picker 存在（单次只支持配置一个任务）。
+    通过 `current_instance()` 类方法访问当前活跃实例。
+    """
 
     step_configured = Signal(object)
+
+    _active_instance: "Optional[VisualPickerWindow]" = None
+
+    @classmethod
+    def current_instance(cls) -> "Optional[VisualPickerWindow]":
+        """返回当前活跃 picker（已 show 且未 close）；无则返回 None。"""
+        try:
+            inst = cls._active_instance
+            if inst is None:
+                return None
+            # isVisible 检查应对窗口被销毁但引用尚存的情况
+            if not inst.isVisible():
+                return None
+            return inst
+        except RuntimeError:
+            # 底层 C++ 对象已被销毁
+            cls._active_instance = None
+            return None
 
     def __init__(self, parent=None, initial_url: str = ""):
         super().__init__(
@@ -371,6 +393,9 @@ class VisualPickerWindow(QWidget):
         self._pick_mode = False
         self._record_mode = False
         self._recorded_actions = []
+
+        # 注册为全局唯一实例
+        VisualPickerWindow._active_instance = self
 
         self._setup_ui()
         self._apply_styles()
@@ -924,4 +949,7 @@ class VisualPickerWindow(QWidget):
         if self._picker_thread and self._picker_thread.isRunning():
             self._picker_thread.stop()
             self._picker_thread.wait(3000)
+        # 清掉单例引用，避免后续 current_instance() 仍返回已死实例
+        if VisualPickerWindow._active_instance is self:
+            VisualPickerWindow._active_instance = None
         super().closeEvent(event)

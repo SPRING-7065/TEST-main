@@ -216,14 +216,26 @@ class TaskCard(QFrame):
         self.progress_widget.setVisible(False)
         root.addWidget(self.progress_widget)
 
-        # 第三行：截图预览
+        # 第三行：截图预览（带折叠按钮，避免任务多时纵向占地过大）
         self.screenshot_widget = QWidget()
         ss_layout = QHBoxLayout(self.screenshot_widget)
         ss_layout.setContentsMargins(0, 0, 0, 0)
-        ss_layout.setSpacing(12)
+        ss_layout.setSpacing(10)
+
+        # 折叠/展开切换按钮（占用最左小条）
+        self._screenshot_collapsed = False
+        self._toggle_ss_btn = QPushButton("📷 隐藏")
+        self._toggle_ss_btn.setFixedSize(64, 24)
+        self._toggle_ss_btn.setStyleSheet(
+            "QPushButton{background:#7f8c8d;color:white;border-radius:3px;"
+            "font-size:11px;border:none;padding:0;}"
+            "QPushButton:hover{background:#566573;}"
+        )
+        self._toggle_ss_btn.clicked.connect(self._toggle_screenshot_view)
+        ss_layout.addWidget(self._toggle_ss_btn, 0, Qt.AlignmentFlag.AlignTop)
 
         self.screenshot_label = QLabel("等待截图...")
-        self.screenshot_label.setFixedSize(192, 108)
+        self.screenshot_label.setFixedSize(160, 90)
         self.screenshot_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.screenshot_label.setStyleSheet(
             "background:#1e1e2e; color:#666; border-radius:4px;"
@@ -234,10 +246,10 @@ class TaskCard(QFrame):
         ss_layout.addWidget(self.screenshot_label)
 
         hint = QLabel(
-            "🖥️ 浏览器实时画面\n（每4秒自动刷新）\n\n点击截图可放大查看"
+            "🖥️ 浏览器实时画面（每4秒刷新）\n点击截图可放大；右上角按钮可折叠"
         )
         hint.setStyleSheet("color:#7f8c8d; font-size:10px;")
-        ss_layout.addWidget(hint)
+        ss_layout.addWidget(hint, 0, Qt.AlignmentFlag.AlignTop)
         ss_layout.addStretch()
 
         self.screenshot_widget.setVisible(False)
@@ -293,9 +305,23 @@ class TaskCard(QFrame):
             pass
 
     def show_screenshot_panel(self, visible: bool):
+        # 用户已主动折叠的卡，不再被状态变化强制展开
+        if visible and self._screenshot_collapsed:
+            return
         self.screenshot_widget.setVisible(visible)
         if not visible:
             self.progress_widget.setVisible(False)
+
+    def _toggle_screenshot_view(self):
+        """折叠/展开截图视图（用户主动）"""
+        self._screenshot_collapsed = not self._screenshot_collapsed
+        if self._screenshot_collapsed:
+            # 折叠：仅隐藏图片，按钮文字改为"展开"
+            self.screenshot_label.setVisible(False)
+            self._toggle_ss_btn.setText("📷 展开")
+        else:
+            self.screenshot_label.setVisible(True)
+            self._toggle_ss_btn.setText("📷 隐藏")
 
     def refresh_status(self):
         """任务完成后刷新按钮状态和状态标签"""
@@ -423,6 +449,17 @@ class TaskListWidget(QWidget):
         card = self._cards.get(task_id)
         if card:
             card.update_progress(current, total, step_name)
+
+    def update_task_status_only(self, task_id: str):
+        """仅刷新指定任务卡的状态显示，不影响其他卡的截图/进度。
+        用于状态变化（queued/running/success/...）的低成本更新。
+        """
+        card = self._cards.get(task_id)
+        if card:
+            card.refresh_status()
+            # 任务进入运行/排队态时打开截图面板，让用户能看到进度
+            if card.task.last_run_status in ("running", "queued"):
+                card.show_screenshot_panel(True)
 
     def update_task_screenshot(self, task_id: str, img_bytes: bytes):
         card = self._cards.get(task_id)

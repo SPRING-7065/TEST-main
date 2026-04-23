@@ -607,28 +607,34 @@ class TaskEditorDialog(QDialog):
                 initial_url = step.value
                 break
 
-        if self._picker_window and not self._picker_window.isHidden():
-            self._picker_window.raise_()
-            self._picker_window.activateWindow()
+        # 全局唯一：若已有 picker 在运行，直接前置而不是再开一个
+        existing = VisualPickerWindow.current_instance()
+        if existing is not None:
+            existing.show()
+            existing.raise_()
+            existing.activateWindow()
+            self._picker_window = existing
             return
 
-        self._picker_window = VisualPickerWindow(self, initial_url=initial_url)
+        # 关键：parent=None，picker 完全独立于编辑器
+        # （如果 parent=editor，editor 隐藏/最小化时 Tool 子窗口也会跟着隐藏，
+        # 之前 v1.1.4 拾取控制台被一起隐藏的 bug 就是这个原因）
+        self._picker_window = VisualPickerWindow(None, initial_url=initial_url)
         self._picker_window.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
         self._picker_window.step_configured.connect(self._on_step_from_picker)
-        # picker 关闭后恢复主窗口/编辑器
+        # picker 关闭后恢复主窗口（不动编辑器）
         self._picker_window.destroyed.connect(self._on_picker_destroyed)
         self._picker_window.show()
 
-        # 拾取/录制时自动让出视野（受设置控制，默认开）
+        # 仅最小化主窗口让出浏览器视野；编辑器保持原状不动
+        # （之前 hide 编辑器导致用户看不到 Save 按钮，关闭 picker 后又把
+        # 主窗口抢到前面，让用户误以为"任务消失了"）
         try:
             from storage.settings_store import get_setting
             auto_min = get_setting("auto_minimize_on_picker")
         except Exception:
             auto_min = True
         if auto_min:
-            # 编辑器先隐藏（非模态时它会抢层级、挡浏览器）
-            self.hide()
-            # 主窗口最小化
             mw = self._find_main_window()
             if mw is not None:
                 mw.showMinimized()
@@ -644,21 +650,28 @@ class TaskEditorDialog(QDialog):
         return None
 
     def _on_picker_destroyed(self):
-        """picker 窗口关闭后恢复编辑器与主窗口"""
-        try:
-            self.show()
-            self.raise_()
-            self.activateWindow()
-        except Exception:
-            pass
+        """picker 窗口关闭后只恢复主窗口；不动编辑器（它一直没被隐藏）"""
         mw = self._find_main_window()
         if mw is not None:
             try:
                 mw.showNormal()
-                mw.activateWindow()
+                # 关键：不调用 mw.activateWindow()，
+                # 否则会把焦点抢离编辑器导致用户以为任务列表是当前窗口
             except Exception:
                 pass
         self._picker_window = None
+
+    # ─────────────────────────────────────────────
+    # 编辑器关闭：强制销毁可能仍存活的 picker，避免残留窗口
+    # ─────────────────────────────────────────────
+    def done(self, result):
+        try:
+            existing = VisualPickerWindow.current_instance()
+            if existing is not None:
+                existing.close()
+        except Exception:
+            pass
+        super().done(result)
 
     def _on_step_from_picker(self, step: Step):
         """接收来自可视化拾取窗口的步骤"""
