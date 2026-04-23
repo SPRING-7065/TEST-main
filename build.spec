@@ -41,6 +41,18 @@ hidden_imports = [
     'DrissionPage._pages.chromium_tab',
     'DrissionPage._configs.chromium_options',
 
+    # keyring 后端：PyInstaller 静态分析无法发现，必须显式列出
+    'keyring',
+    'keyring.backends',
+    'keyring.backends.Windows',
+    'keyring.backends.macOS',
+    'keyring.backends.SecretService',
+    'keyring.backends.fail',
+    'keyring.backends.null',
+    'jaraco.classes',
+    'jaraco.context',
+    'jaraco.functools',
+
     # 标准库
     'json',
     'uuid',

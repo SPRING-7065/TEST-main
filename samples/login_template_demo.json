@@ -1,0 +1,78 @@
+{
+  "tasks": [
+    {
+      "task_id": "logindemo",
+      "name": "登录模板演示（the-internet）",
+      "description": "演示 v1.2.0 登录模板：测试站 the-internet.herokuapp.com 提供公开账号 tomsmith / SuperSecretPassword!。导入此任务后请到「🔐 登录」Tab 把账号密码保存到密钥库再执行。",
+      "steps": [
+        {
+          "step_type": "open_url",
+          "description": "访问受保护页面",
+          "selector": "",
+          "selector_type": "css",
+          "value": "https://the-internet.herokuapp.com/secure",
+          "timeout": 30,
+          "optional": false
+        },
+        {
+          "step_type": "wait",
+          "description": "等待页面渲染",
+          "selector": "",
+          "selector_type": "css",
+          "value": "2",
+          "timeout": 10,
+          "optional": false
+        }
+      ],
+      "schedule": {
+        "enabled": false,
+        "schedule_type": "daily",
+        "run_time": "09:00",
+        "weekdays": [],
+        "monthdays": []
+      },
+      "max_retries": 1,
+      "timeout_per_step": 60,
+      "save_dir_override": "",
+      "last_run_time": "",
+      "last_run_status": "never",
+      "login_template": {
+        "enabled": true,
+        "actions": [
+          {
+            "action_type": "open_url",
+            "selector": "",
+            "selector_type": "css",
+            "value": "https://the-internet.herokuapp.com/login",
+            "wait_after_ms": 800
+          },
+          {
+            "action_type": "input",
+            "selector": "#username",
+            "selector_type": "css",
+            "value": "${username}",
+            "wait_after_ms": 200
+          },
+          {
+            "action_type": "input",
+            "selector": "#password",
+            "selector_type": "css",
+            "value": "${password}",
+            "wait_after_ms": 200
+          },
+          {
+            "action_type": "click",
+            "selector": "button[type=submit]",
+            "selector_type": "css",
+            "value": "",
+            "wait_after_ms": 1500
+          }
+        ],
+        "skip_check_selector": "a.button.secondary",
+        "skip_check_type": "exists",
+        "skip_check_value": "",
+        "skip_check_timeout_sec": 3
+      }
+    }
+  ]
+}

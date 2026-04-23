@@ -1,2 +1,3 @@
 PySide6==6.7.2
 DrissionPage>=4.0.0
+keyring>=24.0

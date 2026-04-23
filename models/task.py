@@ -5,6 +5,7 @@
 from dataclasses import dataclass, field
 from typing import List, Optional
 from models.step import Step
+from models.login import LoginTemplate
 import uuid
  
 @dataclass
@@ -47,11 +48,12 @@ class Task:
     timeout_per_step: int = 120
     save_dir_override: str = ""      # 留空则使用默认路径
     fresh_session: bool = False      # True=每次运行前清除Cookie，避免登录状态残留导致第二次失败
+    login_template: Optional[LoginTemplate] = None  # v1.2.0: 自动登录模板
     last_run_time: str = ""
     last_run_status: str = ""        # success / failed / running / never
- 
+
     def to_dict(self) -> dict:
-        return {
+        d = {
             "task_id": self.task_id,
             "name": self.name,
             "description": self.description,
@@ -63,11 +65,18 @@ class Task:
             "last_run_time": self.last_run_time,
             "last_run_status": self.last_run_status,
         }
- 
+        if self.login_template is not None:
+            d["login_template"] = self.login_template.to_dict()
+        return d
+
     @classmethod
     def from_dict(cls, data: dict) -> "Task":
         steps = [Step.from_dict(s) for s in data.get("steps", [])]
         schedule = ScheduleConfig.from_dict(data.get("schedule", {}))
+        login_data = data.get("login_template")
+        login_template = (
+            LoginTemplate.from_dict(login_data) if login_data else None
+        )
         return cls(
             task_id=data.get("task_id", str(uuid.uuid4())[:8]),
             name=data.get("name", "新建任务"),
@@ -77,6 +86,7 @@ class Task:
             max_retries=data.get("max_retries", 3),
             timeout_per_step=data.get("timeout_per_step", 120),
             save_dir_override=data.get("save_dir_override", ""),
+            login_template=login_template,
             last_run_time=data.get("last_run_time", ""),
             last_run_status=data.get("last_run_status", "never"),
         )

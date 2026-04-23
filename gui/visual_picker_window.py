@@ -361,6 +361,10 @@ class VisualPickerWindow(QWidget):
     """
 
     step_configured = Signal(object)
+    # v1.2.0: 登录模板录制完毕（list[LoginAction]）
+    login_recorded = Signal(object)
+    # v1.2.0: 单次拾取（用于 skip_check 选择器）
+    single_element_picked = Signal(object)
 
     _active_instance: "Optional[VisualPickerWindow]" = None
 
@@ -380,14 +384,26 @@ class VisualPickerWindow(QWidget):
             cls._active_instance = None
             return None
 
-    def __init__(self, parent=None, initial_url: str = ""):
+    def __init__(self, parent=None, initial_url: str = "", mode: str = "normal"):
+        """mode:
+        - "normal"   : 默认，可拾取/录制操作步骤
+        - "login"    : 登录模板录制；保存时 emit login_recorded(list[LoginAction])
+        - "pick_one" : 单次拾取一个元素（用于 skip_check）；
+                       首次 element_picked 后立即 emit single_element_picked + 关闭
+        """
         super().__init__(
             parent,
             Qt.WindowType.Tool | Qt.WindowType.WindowStaysOnTopHint,
         )
-        self.setWindowTitle("🎯 拾取控制台")
+        title_map = {
+            "normal":   "🎯 拾取控制台",
+            "login":    "🔐 登录录制控制台",
+            "pick_one": "🎯 拾取已登录标志元素",
+        }
+        self.setWindowTitle(title_map.get(mode, "🎯 拾取控制台"))
         self.setFixedWidth(_PANEL_W)
 
+        self._mode = mode
         self._picker_thread: Optional[PickerThread] = None
         self._initial_url = initial_url
         self._pick_mode = False
@@ -543,7 +559,10 @@ class VisualPickerWindow(QWidget):
 
         rec_btns = QHBoxLayout()
         rec_btns.setSpacing(4)
-        self.add_recorded_btn = QPushButton("✅ 全部添加")
+        # 登录模式按钮文案与行为不同
+        self.add_recorded_btn = QPushButton(
+            "💾 保存为登录模板" if self._mode == "login" else "✅ 全部添加"
+        )
         self.add_recorded_btn.setEnabled(False)
         self.add_recorded_btn.setObjectName("addBtn")
         self.add_recorded_btn.clicked.connect(self._add_recorded_steps)
@@ -559,6 +578,35 @@ class VisualPickerWindow(QWidget):
         clear_btn.clicked.connect(self._clear_recorded_actions)
         rec_btns.addWidget(clear_btn)
         layout.addLayout(rec_btns)
+
+        # v1.2.0: 登录模式专用 — 占位符插入按钮
+        if self._mode == "login":
+            ph_label = QLabel("把选中的输入步骤替换为占位符（密码不录入明文）：")
+            ph_label.setWordWrap(True)
+            ph_label.setStyleSheet(
+                "color:#7d6608; font-size:11px; padding:6px 4px; "
+                "background:#fef9e7; border-radius:3px;"
+            )
+            layout.addWidget(ph_label)
+
+            ph_row = QHBoxLayout()
+            ph_row.setSpacing(4)
+            self.insert_user_btn = QPushButton("🔑 替换为 ${username}")
+            self.insert_user_btn.setEnabled(False)
+            self.insert_user_btn.clicked.connect(
+                lambda: self._replace_selected_input_value("${username}")
+            )
+            ph_row.addWidget(self.insert_user_btn, 1)
+            self.insert_pwd_btn = QPushButton("🔒 替换为 ${password}")
+            self.insert_pwd_btn.setEnabled(False)
+            self.insert_pwd_btn.clicked.connect(
+                lambda: self._replace_selected_input_value("${password}")
+            )
+            ph_row.addWidget(self.insert_pwd_btn, 1)
+            layout.addLayout(ph_row)
+            self.record_list.itemSelectionChanged.connect(
+                self._update_placeholder_btn_state
+            )
 
         layout.addWidget(self._sep())
 
@@ -664,6 +712,24 @@ class VisualPickerWindow(QWidget):
         self._pick_mode = False
         self._record_mode = False
         self._reset_mode_buttons()
+
+        # v1.2.0 模式分支
+        if self._mode == "pick_one":
+            self._toggle_pick_mode()
+            self._set_status(
+                "🎯 浏览器已就绪，请在页面中点击一个【已登录后才出现】的元素",
+                "#2980b9"
+            )
+            return
+        if self._mode == "login":
+            self._toggle_record_mode()
+            self._set_status(
+                "🔴 已自动进入登录录制模式：请走一遍真实登录流程，"
+                "密码填好后选中该步并点「替换为 ${password}」",
+                "#d35400"
+            )
+            return
+
         self._set_status(
             "✅ 浏览器已就绪！可先登录/浏览，然后点击「进入拾取模式」或「开始录制」",
             "#27ae60"
@@ -768,6 +834,14 @@ class VisualPickerWindow(QWidget):
         description = element_info.get("description", "")
         tag = element_info.get("tag", "")
 
+        # v1.2.0 pick_one 模式：单次拾取，立即 emit 并关闭
+        if self._mode == "pick_one":
+            self.single_element_picked.emit(element_info)
+            self._set_status(f"✅ 已捕获：{description}，正在关闭...", "#27ae60")
+            from PySide6.QtCore import QTimer
+            QTimer.singleShot(300, self.close)
+            return
+
         self.selector_input.setText(selector)
         self._set_status(f"✅ 已捕获：{description}", "#27ae60")
 
@@ -845,6 +919,45 @@ class VisualPickerWindow(QWidget):
         self.rec_count_label.setText(f"{self.record_list.count()} 步")
 
     def _add_recorded_steps(self):
+        # 登录模式：转换为 LoginAction list 并 emit login_recorded
+        if self._mode == "login":
+            from models.login import LoginAction
+            actions = []
+            # 任务执行时通常需要先回到登录入口页，记录一个 open_url 动作作为首步
+            url = self.url_input.text().strip()
+            if url:
+                actions.append(LoginAction(action_type="open_url", value=url))
+            for i in range(self.record_list.count()):
+                item = self.record_list.item(i)
+                step = item.data(Qt.ItemDataRole.UserRole)
+                if not isinstance(step, Step):
+                    continue
+                if step.step_type == StepType.CLICK:
+                    actions.append(LoginAction(
+                        action_type="click",
+                        selector=step.selector,
+                        selector_type=step.selector_type or "css",
+                    ))
+                elif step.step_type == StepType.INPUT:
+                    actions.append(LoginAction(
+                        action_type="input",
+                        selector=step.selector,
+                        selector_type=step.selector_type or "css",
+                        value=step.value or "",
+                    ))
+                elif step.step_type == StepType.SELECT:
+                    # SELECT 在登录场景少见但兼容，复用 input 动作
+                    actions.append(LoginAction(
+                        action_type="input",
+                        selector=step.selector,
+                        selector_type=step.selector_type or "css",
+                        value=step.value or "",
+                    ))
+            self.login_recorded.emit(actions)
+            self._set_status(f"✅ 登录模板已保存（{len(actions)} 步），请关闭本窗口", "#27ae60")
+            return
+
+        # 普通模式：为每条 emit step_configured（原有行为）
         count = 0
         for i in range(self.record_list.count()):
             item = self.record_list.item(i)
@@ -854,6 +967,33 @@ class VisualPickerWindow(QWidget):
                 count += 1
         self._clear_recorded_actions()
         self._set_status(f"✅ 已将 {count} 个录制步骤添加到任务", "#27ae60")
+
+    # v1.2.0 登录模式：占位符替换
+    def _update_placeholder_btn_state(self):
+        if not hasattr(self, "insert_user_btn"):
+            return
+        item = self.record_list.currentItem()
+        is_input = False
+        if item is not None:
+            step = item.data(Qt.ItemDataRole.UserRole)
+            is_input = isinstance(step, Step) and step.step_type == StepType.INPUT
+        self.insert_user_btn.setEnabled(is_input)
+        self.insert_pwd_btn.setEnabled(is_input)
+
+    def _replace_selected_input_value(self, placeholder: str):
+        """把当前选中的录制项（必须是 INPUT 步骤）的 value 改为占位符。
+        显示文案同步更新成 🔒/🔑 形式，避免列表里残留明文密码。
+        """
+        item = self.record_list.currentItem()
+        if item is None:
+            return
+        step = item.data(Qt.ItemDataRole.UserRole)
+        if not (isinstance(step, Step) and step.step_type == StepType.INPUT):
+            return
+        step.value = placeholder
+        step.description = f"输入：{placeholder}"
+        icon = "🔒" if "password" in placeholder else "🔑"
+        item.setText(f"⌨️ {icon} 输入：{placeholder}  ←  {step.selector[:40]}")
 
     def _remove_selected_recorded_actions(self):
         selected = self.record_list.selectedItems()

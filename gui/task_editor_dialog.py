@@ -15,7 +15,12 @@ from PySide6.QtGui import QFont
 
 from models.task import Task, ScheduleConfig
 from models.step import Step, StepType, STEP_TYPE_LABELS
+from models.login import LoginTemplate, LoginAction
 from gui.visual_picker_window import VisualPickerWindow
+from storage.credentials import (
+    save_credentials, get_credentials, has_credentials,
+    delete_credentials, is_available as keyring_available,
+)
 
 class StepListItem(QListWidgetItem):
     """步骤列表项，持有Step对象引用"""
@@ -281,6 +286,11 @@ class TaskEditorDialog(QDialog):
         schedule_widget = QWidget()
         self._setup_schedule_tab(schedule_widget)
         tabs.addTab(schedule_widget, "⏰  定时计划")
+
+        # Tab 4 登录模板（v1.2.0）
+        login_widget = QWidget()
+        self._setup_login_tab(login_widget)
+        tabs.addTab(login_widget, "🔐  登录")
 
         main_layout.addWidget(tabs, 1)
 
@@ -553,6 +563,339 @@ class TaskEditorDialog(QDialog):
         self._on_schedule_toggle()
         self._on_sched_type_changed()
 
+    # ── Tab4: 登录模板（v1.2.0）──
+    def _setup_login_tab(self, parent: QWidget):
+        layout = QVBoxLayout(parent)
+        layout.setSpacing(14)
+        layout.setContentsMargins(12, 12, 12, 12)
+
+        # keyring 不可用时给警告
+        if not keyring_available():
+            warn = QLabel(
+                "⚠️ 当前系统未检测到可用的密钥库后端，"
+                "登录模板功能不可用（Windows/Mac 通常自带，"
+                "如在容器/精简 Linux 中请安装 GNOME Keyring 或类似服务）"
+            )
+            warn.setWordWrap(True)
+            warn.setStyleSheet(
+                "background:#fdecea; color:#c0392b; padding:10px;"
+                "border-radius:6px; border-left:4px solid #e74c3c;"
+            )
+            layout.addWidget(warn)
+
+        # 启用开关
+        self.login_enabled_check = QCheckBox(
+            "启用登录模板（任务执行时自动检测登录态，未登录则回放下方动作）"
+        )
+        self.login_enabled_check.toggled.connect(self._on_login_enabled_toggled)
+        layout.addWidget(self.login_enabled_check)
+
+        # 容器：开关关闭时整体灰显
+        self._login_config_group = QWidget()
+        cfg = QVBoxLayout(self._login_config_group)
+        cfg.setContentsMargins(0, 0, 0, 0)
+        cfg.setSpacing(12)
+
+        # 1) 登录流程
+        flow_group = QGroupBox("📹 登录流程（按顺序回放）")
+        flow_v = QVBoxLayout(flow_group)
+        self.login_actions_list = QListWidget()
+        self.login_actions_list.setMinimumHeight(120)
+        flow_v.addWidget(self.login_actions_list)
+
+        flow_btns = QHBoxLayout()
+        self.record_login_btn = QPushButton("📹 录制登录流程")
+        self.record_login_btn.setToolTip(
+            "打开浏览器走一遍真实登录流程，密码字段可用「插入 ${password}」占位"
+        )
+        self.record_login_btn.clicked.connect(self._open_login_recorder)
+        flow_btns.addWidget(self.record_login_btn)
+
+        self.del_login_action_btn = QPushButton("🗑️ 删除选中")
+        self.del_login_action_btn.clicked.connect(self._delete_selected_login_action)
+        flow_btns.addWidget(self.del_login_action_btn)
+
+        self.clear_login_btn = QPushButton("🧹 清空全部")
+        self.clear_login_btn.clicked.connect(self._clear_login_actions)
+        flow_btns.addWidget(self.clear_login_btn)
+        flow_btns.addStretch()
+        flow_v.addLayout(flow_btns)
+        cfg.addWidget(flow_group)
+
+        # 2) 已登录标志
+        check_group = QGroupBox("🎯 已登录标志元素（找到此元素 = 已登录，跳过登录）")
+        check_grid = QGridLayout(check_group)
+        check_grid.setColumnStretch(1, 1)
+
+        check_grid.addWidget(QLabel("选择器"), 0, 0)
+        self.skip_check_selector_input = QLineEdit()
+        self.skip_check_selector_input.setPlaceholderText(
+            "例如 .user-avatar 或 #header .username"
+        )
+        check_grid.addWidget(self.skip_check_selector_input, 0, 1)
+        self.pick_skip_check_btn = QPushButton("🎯 拾取")
+        self.pick_skip_check_btn.setFixedWidth(80)
+        self.pick_skip_check_btn.clicked.connect(self._pick_skip_check_element)
+        check_grid.addWidget(self.pick_skip_check_btn, 0, 2)
+
+        check_grid.addWidget(QLabel("检测方式"), 1, 0)
+        self.skip_check_type_combo = QComboBox()
+        self.skip_check_type_combo.addItem("元素存在即视为已登录", "exists")
+        self.skip_check_type_combo.addItem("元素文本包含指定内容", "text_contains")
+        self.skip_check_type_combo.currentIndexChanged.connect(
+            self._on_skip_check_type_changed
+        )
+        check_grid.addWidget(self.skip_check_type_combo, 1, 1, 1, 2)
+
+        self._skip_check_value_row = QWidget()
+        v_row = QHBoxLayout(self._skip_check_value_row)
+        v_row.setContentsMargins(0, 0, 0, 0)
+        v_row.addWidget(QLabel("应包含文本"))
+        self.skip_check_value_input = QLineEdit()
+        self.skip_check_value_input.setPlaceholderText("例如：欢迎，张三")
+        v_row.addWidget(self.skip_check_value_input)
+        check_grid.addWidget(self._skip_check_value_row, 2, 0, 1, 3)
+        cfg.addWidget(check_group)
+
+        # 3) 凭据
+        cred_group = QGroupBox("🔒 账号密码（加密存储到系统密钥库，不进 JSON）")
+        cred_grid = QGridLayout(cred_group)
+        cred_grid.setColumnStretch(1, 1)
+
+        cred_grid.addWidget(QLabel("用户名"), 0, 0)
+        self.cred_username_input = QLineEdit()
+        self.cred_username_input.setPlaceholderText("登录账号")
+        cred_grid.addWidget(self.cred_username_input, 0, 1)
+
+        cred_grid.addWidget(QLabel("密码"), 1, 0)
+        self.cred_password_input = QLineEdit()
+        self.cred_password_input.setEchoMode(QLineEdit.EchoMode.Password)
+        self.cred_password_input.setPlaceholderText("登录密码")
+        cred_grid.addWidget(self.cred_password_input, 1, 1)
+
+        cred_btns = QHBoxLayout()
+        self.save_cred_btn = QPushButton("💾 保存凭据到密钥库")
+        self.save_cred_btn.clicked.connect(self._save_credentials_clicked)
+        cred_btns.addWidget(self.save_cred_btn)
+        self.del_cred_btn = QPushButton("🗑️ 删除凭据")
+        self.del_cred_btn.clicked.connect(self._delete_credentials_clicked)
+        cred_btns.addWidget(self.del_cred_btn)
+        cred_btns.addStretch()
+        cred_grid.addLayout(cred_btns, 2, 0, 1, 2)
+
+        self.cred_status_label = QLabel("")
+        self.cred_status_label.setStyleSheet("color:#7f8c8d; font-size:12px;")
+        cred_grid.addWidget(self.cred_status_label, 3, 0, 1, 2)
+        cfg.addWidget(cred_group)
+
+        # 4) 测试
+        test_row = QHBoxLayout()
+        self.test_login_btn = QPushButton("🧪 测试登录（打开浏览器跑一遍）")
+        self.test_login_btn.clicked.connect(self._test_login_clicked)
+        test_row.addWidget(self.test_login_btn)
+        test_row.addStretch()
+        cfg.addLayout(test_row)
+
+        cfg.addStretch()
+        layout.addWidget(self._login_config_group, 1)
+        self._on_login_enabled_toggled(False)
+        self._on_skip_check_type_changed()
+
+    # ── 登录 Tab 行为 ──
+    def _on_login_enabled_toggled(self, enabled: bool):
+        self._login_config_group.setEnabled(enabled)
+
+    def _on_skip_check_type_changed(self):
+        is_text = self.skip_check_type_combo.currentData() == "text_contains"
+        self._skip_check_value_row.setVisible(is_text)
+
+    def _refresh_login_actions_list(self, actions):
+        self.login_actions_list.clear()
+        for i, a in enumerate(actions, 1):
+            icon = {
+                "open_url": "🌐", "click": "🖱️",
+                "input": "⌨️", "wait": "⏱️",
+            }.get(a.action_type, "•")
+            if a.action_type == "input":
+                # 显示占位符或脱敏
+                v = a.value or ""
+                if "${password}" in v:
+                    desc = "🔒 输入：${password}"
+                elif "${username}" in v:
+                    desc = "🔑 输入：${username}"
+                else:
+                    desc = f"输入：{v[:30]}"
+                text = f"{i}. {icon} {desc}  ←  {a.selector[:40]}"
+            elif a.action_type == "open_url":
+                text = f"{i}. {icon} 访问：{(a.value or a.selector)[:60]}"
+            elif a.action_type == "click":
+                text = f"{i}. {icon} 点击：{a.selector[:60]}"
+            elif a.action_type == "wait":
+                text = f"{i}. {icon} 等待 {a.value or '1'} 秒"
+            else:
+                text = f"{i}. {icon} {a.action_type}"
+            item = QListWidgetItem(text)
+            item.setData(Qt.ItemDataRole.UserRole, a)
+            self.login_actions_list.addItem(item)
+
+    def _delete_selected_login_action(self):
+        row = self.login_actions_list.currentRow()
+        if row < 0:
+            return
+        actions = self._collect_login_actions()
+        del actions[row]
+        self._refresh_login_actions_list(actions)
+
+    def _clear_login_actions(self):
+        if self.login_actions_list.count() == 0:
+            return
+        reply = QMessageBox.question(
+            self, "确认", "清空已录制的所有登录动作？",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            self.login_actions_list.clear()
+
+    def _collect_login_actions(self):
+        actions = []
+        for i in range(self.login_actions_list.count()):
+            item = self.login_actions_list.item(i)
+            a = item.data(Qt.ItemDataRole.UserRole)
+            if isinstance(a, LoginAction):
+                actions.append(a)
+        return actions
+
+    def _open_login_recorder(self):
+        """打开登录录制 picker（mode='login'）。"""
+        existing = VisualPickerWindow.current_instance()
+        if existing is not None:
+            QMessageBox.information(
+                self, "提示", "已有可视化窗口在运行，请先关闭它再开启登录录制"
+            )
+            return
+        # 用首个登录动作的 URL 作初始 URL；没有则用任务首个 OPEN_URL
+        initial_url = ""
+        actions = self._collect_login_actions()
+        if actions and actions[0].action_type == "open_url":
+            initial_url = actions[0].value
+        if not initial_url:
+            for step in self._get_current_steps():
+                if step.step_type == StepType.OPEN_URL:
+                    initial_url = step.value
+                    break
+        self._picker_window = VisualPickerWindow(
+            None, initial_url=initial_url, mode="login"
+        )
+        self._picker_window.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+        self._picker_window.login_recorded.connect(self._on_login_recorded)
+        self._picker_window.destroyed.connect(self._on_picker_destroyed)
+        self._picker_window.show()
+        # 让出浏览器视野
+        try:
+            from storage.settings_store import get_setting
+            if get_setting("auto_minimize_on_picker"):
+                mw = self._find_main_window()
+                if mw is not None:
+                    mw.showMinimized()
+        except Exception:
+            pass
+
+    def _on_login_recorded(self, actions):
+        """收到登录录制结果：替换列表内容"""
+        self._refresh_login_actions_list(actions)
+        QMessageBox.information(
+            self, "录制完成",
+            f"已保存 {len(actions)} 个登录动作。\n"
+            "请确认密码字段已替换为 ${password} 占位符再保存任务。"
+        )
+
+    def _pick_skip_check_element(self):
+        """打开 picker（mode='pick_one'），单次拾取后自动关闭并写入选择器框。"""
+        existing = VisualPickerWindow.current_instance()
+        if existing is not None:
+            QMessageBox.information(
+                self, "提示", "已有可视化窗口在运行，请先关闭它"
+            )
+            return
+        # 优先用登录入口 URL；让用户在登录之后再点击元素
+        actions = self._collect_login_actions()
+        initial_url = ""
+        if actions and actions[0].action_type == "open_url":
+            initial_url = actions[0].value
+        if not initial_url:
+            for step in self._get_current_steps():
+                if step.step_type == StepType.OPEN_URL:
+                    initial_url = step.value
+                    break
+        self._picker_window = VisualPickerWindow(
+            None, initial_url=initial_url, mode="pick_one"
+        )
+        self._picker_window.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+        self._picker_window.single_element_picked.connect(self._on_skip_check_picked)
+        self._picker_window.destroyed.connect(self._on_picker_destroyed)
+        self._picker_window.show()
+
+    def _on_skip_check_picked(self, element_info: dict):
+        sel = element_info.get("selector", "")
+        if sel:
+            self.skip_check_selector_input.setText(sel)
+            QMessageBox.information(
+                self, "已捕获",
+                f"已登录标志元素已设置：\n{sel}"
+            )
+
+    def _save_credentials_clicked(self):
+        if not keyring_available():
+            QMessageBox.warning(self, "凭据保存失败", "系统密钥库不可用")
+            return
+        u = self.cred_username_input.text().strip()
+        p = self.cred_password_input.text()
+        if not u or not p:
+            QMessageBox.warning(self, "提示", "用户名和密码都不能为空")
+            return
+        ok = save_credentials(self.task.task_id, u, p)
+        if ok:
+            self.cred_status_label.setText("✅ 凭据已保存到系统密钥库")
+            self.cred_status_label.setStyleSheet("color:#27ae60; font-size:12px;")
+            # 清空密码框，避免后续视觉残留
+            self.cred_password_input.clear()
+        else:
+            self.cred_status_label.setText("❌ 保存失败，请检查密钥库权限")
+            self.cred_status_label.setStyleSheet("color:#c0392b; font-size:12px;")
+
+    def _delete_credentials_clicked(self):
+        reply = QMessageBox.question(
+            self, "确认", "删除此任务的密钥库凭据？",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            delete_credentials(self.task.task_id)
+            self.cred_username_input.clear()
+            self.cred_password_input.clear()
+            self.cred_status_label.setText("🗑️ 凭据已删除")
+            self.cred_status_label.setStyleSheet("color:#7f8c8d; font-size:12px;")
+
+    def _test_login_clicked(self):
+        """启动一次"仅登录"的临时执行，复用 engine"""
+        if not self.login_enabled_check.isChecked():
+            QMessageBox.information(self, "提示", "请先启用登录模板")
+            return
+        actions = self._collect_login_actions()
+        if not actions:
+            QMessageBox.warning(self, "提示", "未配置任何登录动作")
+            return
+        if not self.skip_check_selector_input.text().strip():
+            QMessageBox.warning(self, "提示", "请配置已登录标志元素选择器")
+            return
+        if not has_credentials(self.task.task_id):
+            QMessageBox.warning(self, "提示", "请先保存账号密码到密钥库")
+            return
+        QMessageBox.information(
+            self, "提示",
+            "测试登录会启动一个临时浏览器执行登录模板。\n"
+            "（v1.2.0 后续迭代将提供独立的测试通道；当前请保存任务后用「立即执行」+ 调试模式观察）"
+        )
+
     # ─────────────────────────────────────────────
     # 数据加载
     # ─────────────────────────────────────────────
@@ -594,6 +937,35 @@ class TaskEditorDialog(QDialog):
 
         self._on_schedule_toggle()
         self._on_sched_type_changed()
+
+        # 登录模板（v1.2.0）
+        tpl = self.task.login_template
+        if tpl is not None:
+            self.login_enabled_check.setChecked(tpl.enabled)
+            self._refresh_login_actions_list(tpl.actions)
+            self.skip_check_selector_input.setText(tpl.skip_check_selector)
+            for i in range(self.skip_check_type_combo.count()):
+                if self.skip_check_type_combo.itemData(i) == tpl.skip_check_type:
+                    self.skip_check_type_combo.setCurrentIndex(i)
+                    break
+            self.skip_check_value_input.setText(tpl.skip_check_value)
+        else:
+            self.login_enabled_check.setChecked(False)
+
+        # 凭据：从密钥库读出来填到输入框（密码框走 Password 模式不显示明文）
+        creds = get_credentials(self.task.task_id)
+        if creds:
+            u, p = creds
+            self.cred_username_input.setText(u)
+            self.cred_password_input.setText(p)
+            self.cred_status_label.setText("✅ 已存在密钥库中（可重新保存覆盖）")
+            self.cred_status_label.setStyleSheet("color:#27ae60; font-size:12px;")
+        else:
+            self.cred_status_label.setText("⚠️ 暂无凭据；请填写并点「保存凭据到密钥库」")
+            self.cred_status_label.setStyleSheet("color:#e67e22; font-size:12px;")
+
+        self._on_login_enabled_toggled(self.login_enabled_check.isChecked())
+        self._on_skip_check_type_changed()
 
     # ─────────────────────────────────────────────
     # 步骤管理
@@ -849,6 +1221,30 @@ class TaskEditorDialog(QDialog):
         sch.run_time = self.run_time_edit.time().toString("HH:mm")
         sch.weekdays = [i for i, cb in enumerate(self.weekday_checks) if cb.isChecked()]
         sch.monthdays = [i + 1 for i, cb in enumerate(self.monthday_checks) if cb.isChecked()]
+
+        # 登录模板（v1.2.0）
+        login_actions = self._collect_login_actions()
+        login_enabled = self.login_enabled_check.isChecked()
+        skip_sel = self.skip_check_selector_input.text().strip()
+        if login_enabled and (not login_actions or not skip_sel):
+            ans = QMessageBox.question(
+                self, "登录模板未配置完整",
+                "登录模板已启用但未录制动作或未配置已登录标志元素，"
+                "保存后任务执行时会因登录失败而失败。仍要保存吗？",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            )
+            if ans != QMessageBox.StandardButton.Yes:
+                return
+        if login_enabled or login_actions or skip_sel:
+            tpl = self.task.login_template or LoginTemplate()
+            tpl.enabled = login_enabled
+            tpl.actions = login_actions
+            tpl.skip_check_selector = skip_sel
+            tpl.skip_check_type = self.skip_check_type_combo.currentData() or "exists"
+            tpl.skip_check_value = self.skip_check_value_input.text().strip()
+            self.task.login_template = tpl
+        else:
+            self.task.login_template = None
 
         self.accept()
 

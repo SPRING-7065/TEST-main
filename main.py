@@ -44,7 +44,7 @@ def main():
 
     app = QApplication(sys.argv)
     app.setApplicationName("网页自动取数助手")
-    app.setApplicationVersion("1.1.5")
+    app.setApplicationVersion("1.2.0")
     app.setOrganizationName("WebAutoDownloader")
 
     # 强制 Fusion 样式 + 写死浅色调色板

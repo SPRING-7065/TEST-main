@@ -46,6 +46,19 @@ core/
   variable_parser.py          时间占位符解析（[TODAY-X]等）
   file_manager.py             下载路径和文件命名管理
   logger.py                   日志系统（异常中文翻译）
+  concurrency.py              全局并发信号量（v1.1.4 起）
+
+models/
+  task.py                     Task / ScheduleConfig
+  step.py                     Step / StepType / 标签
+  login.py                    LoginTemplate / LoginAction（v1.2.0 起）
+
+storage/
+  task_store.py               tasks.json 读写
+  settings_store.py           app_settings.json 读写（v1.1.4 起）
+  credentials.py              keyring 加密凭据（v1.2.0 起）
+
+samples/                      可导入的样例任务模板（v1.2.0 起）
 
 注意：原 download_chromium.py（便携 Chromium 下载）已废弃移除，
      程序改为使用用户机器上预装的系统 Chrome。
@@ -342,4 +355,38 @@ SPA页面等待：
 
 Mac本地运行：
   .venv/bin/python3 main.py
+
+---
+
+## 九、v1.2.0 设计决策（登录模板）
+
+### 安全模型
+- 凭据走 `storage/credentials.py` → `keyring` 库 → 平台密钥库
+  （Windows: Credential Manager / Mac: Keychain）
+- 任务 JSON 中只存 `${username}` `${password}` 占位符，绝不存明文
+- 占位符替换发生在 `engine._execute_login_action` 的"input.run_js"调用之前的最后一刻
+- 所有日志只输出 redacted 形式（含 ${password} 的整体显示为 ***）
+- 任务删除时同步调 `delete_credentials(task_id)` 清密钥库残留
+
+### 录制器登录模式
+- `VisualPickerWindow(parent, initial_url, mode='login')`
+  - 浏览器就绪后自动进入录制
+  - 控制面板下方多两个按钮：「🔑 替换为 ${username}」/「🔒 替换为 ${password}」
+  - 用户在浏览器输入真密码后，在控制面板选中该录制项点替换按钮，
+    会把 LoginAction.value 改成占位符（避免明文进列表/JSON）
+  - 保存时不 emit step_configured，而是 emit login_recorded(list[LoginAction])
+- `mode='pick_one'`: 单次拾取（用于 skip_check 选择器），
+  浏览器就绪后自动进入拾取模式，第一次 pick 后 emit single_element_picked + 关闭
+
+### 引擎执行流程（v1.2.0 改动）
+- `_execute_once()` 在浏览器就绪后、所有业务步骤之前调用 `_run_login_template_if_needed()`
+- `_check_logged_in(tpl)`：用 skip_check_selector 在 N 秒内检测元素存在/文本匹配
+- `_execute_login_action(action, username, password)`：复用 `_find_element` /
+  `_do_click` / `element.run_js` 输入逻辑，与正常步骤行为一致
+
+### 打包注意
+- `build.spec` 必须显式列 `keyring.backends.Windows`、`keyring.backends.macOS` 等
+  hidden_imports，否则 PyInstaller 静态分析发现不了运行时动态加载的后端
+- `requirements.txt` 加 `keyring>=24.0`
+- 首次在打包后的 EXE 里运行登录模板，确认 keyring 可用（理论上 Win 自带）
 """

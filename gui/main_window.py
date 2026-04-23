@@ -38,7 +38,7 @@ class MainWindow(QMainWindow):
  
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("🤖 网页自动取数助手 v1.1.5")
+        self.setWindowTitle("🤖 网页自动取数助手 v1.2.0")
         self.setMinimumSize(900, 560)
         self.resize(1100, 700)
 
@@ -315,6 +315,12 @@ class MainWindow(QMainWindow):
             self._scheduler.unregister_task(task_id)
             self._tasks = [t for t in self._tasks if t.task_id != task_id]
             save_tasks(self._tasks)
+            # 同步清除该任务的密钥库凭据，避免残留
+            try:
+                from storage.credentials import delete_credentials
+                delete_credentials(task_id)
+            except Exception:
+                pass
             self._task_list_widget.refresh_tasks(self._tasks)
             logger.log_info(f"任务「{task.name}」已删除")
 

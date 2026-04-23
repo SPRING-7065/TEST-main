@@ -56,6 +56,7 @@ class HelpWidget(QWidget):
         help_tabs.addTab(self._build_quickstart_tab(), "🚀 快速上手")
         help_tabs.addTab(self._build_steps_tab(),      "🔧 步骤类型详解")
         help_tabs.addTab(self._build_variables_tab(),  "📅 时间变量说明")
+        help_tabs.addTab(self._build_login_tab(),      "🔐 登录模板")
         help_tabs.addTab(self._build_faq_tab(),        "❓ 常见问题")
 
         layout.addWidget(help_tabs, 1)
@@ -395,6 +396,84 @@ CSS选择器是定位网页元素的"精确地址"。
 &nbsp;&nbsp;&nbsp;&nbsp;└── 2024-03-15/ &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;← 按执行日期自动创建<br>
 &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;└── 销售报表_20240315_090008.xlsx &nbsp;← 任务名+时间戳防覆盖
 </div>
+"""
+        return self._make_scroll_tab(content)
+
+    def _build_login_tab(self) -> QWidget:
+        content = """
+<h2 style="color:#2980b9; margin-top:0;">🔐 登录模板（v1.2.0 新增）</h2>
+
+<div style="background:#e8f8f5; padding:14px; border-radius:8px;
+            border-left:5px solid #1abc9c; margin:10px 0;">
+<b>什么是登录模板？</b><br><br>
+OA / 内网系统的登录态通常 8-24 小时就过期，每次执行任务都要手动登录非常烦。
+登录模板让你<b>录制一次完整的登录流程</b>（包括"OA 登录"按钮点击、跳转、表单填充），
+任务执行时自动检测：<br>
+&nbsp;&nbsp;• 已登录 → 直接执行业务步骤<br>
+&nbsp;&nbsp;• 未登录 → 自动回放登录流程，再执行业务<br><br>
+密码用 Windows Credential Manager / Mac Keychain 加密存储，<b>不进 JSON 文件、不进日志</b>。
+</div>
+
+<h3 style="color:#2c3e50; margin-top:24px;">📋 配置流程（5 步）</h3>
+
+<div style="background:#eaf2ff; padding:15px; border-radius:8px;
+            border-left:5px solid #3498db; margin:10px 0;">
+<b>① 切到「🔐 登录」Tab，勾选「启用登录模板」</b>
+</div>
+
+<div style="background:#fef9e7; padding:15px; border-radius:8px;
+            border-left:5px solid #f39c12; margin:10px 0;">
+<b>② 点「📹 录制登录流程」</b><br><br>
+浏览器自动打开并进入录制模式，请走一遍真实登录流程：<br>
+&nbsp;&nbsp;• 如果你的 OA 需要先点"OA 登录 / SSO 登录"按钮 → 录制器会自动捕获<br>
+&nbsp;&nbsp;• 点击跳转到登录页 → 录制器会自动捕获<br>
+&nbsp;&nbsp;• 填用户名 → 真实输入即可（注意：录制器会捕获明文）<br>
+&nbsp;&nbsp;• 填密码 → 真实输入即可<br>
+&nbsp;&nbsp;• 点登录按钮 → 录制器会自动捕获<br><br>
+<b>关键：</b>登录成功后回到控制面板：<br>
+&nbsp;&nbsp;1. 在录制列表选中"输入用户名"那一步 → 点「🔑 替换为 ${username}」<br>
+&nbsp;&nbsp;2. 在录制列表选中"输入密码"那一步 → 点「🔒 替换为 ${password}」<br>
+&nbsp;&nbsp;3. 点「💾 保存为登录模板」回到编辑器
+</div>
+
+<div style="background:#f3e5f5; padding:15px; border-radius:8px;
+            border-left:5px solid #8e44ad; margin:10px 0;">
+<b>③ 点「🎯 拾取」选择「已登录标志元素」</b><br><br>
+浏览器会再次打开。请<b>先手动登录</b>（任意账号），然后<b>点击一个登录后才会出现的元素</b>，
+比如顶部右上角的"欢迎，张三"、用户头像、退出按钮等。<br><br>
+任务执行时程序就靠这个元素判断"是否已经登录了"。
+</div>
+
+<div style="background:#fdecea; padding:15px; border-radius:8px;
+            border-left:5px solid #e74c3c; margin:10px 0;">
+<b>④ 填用户名密码，点「💾 保存凭据到密钥库」</b><br><br>
+密码会通过系统密钥库（Windows: Credential Manager；Mac: Keychain）加密保存，
+<b>不会写入 tasks.json</b>，也不会出现在任何日志中。<br><br>
+保存成功后下方会显示 ✅ 提示。
+</div>
+
+<div style="background:#eafaf1; padding:15px; border-radius:8px;
+            border-left:5px solid #27ae60; margin:10px 0;">
+<b>⑤ 保存任务，立即执行验证</b><br><br>
+首次执行：会看到"🔐 检测到未登录，开始回放登录模板"→ 登录成功<br>
+后续执行：会看到"✅ 检测到已登录（cookie 复用），跳过登录模板"
+</div>
+
+<h3 style="color:#2c3e50; margin-top:24px;">🔒 安全说明</h3>
+<ul style="color:#34495e; line-height:1.8;">
+<li>密码不存在任务 JSON 里，分享任务文件时密码不会泄露给同事</li>
+<li>密码不出现在运行日志中（占位符 <code>${password}</code> 替换发生在执行那一刻，立即销毁）</li>
+<li>密钥库 per-user 绑定：把同一台电脑的程序拷给别人用，对方无法解出密码</li>
+<li>删除任务时凭据自动清除</li>
+</ul>
+
+<h3 style="color:#2c3e50; margin-top:24px;">⚠️ 已知限制</h3>
+<ul style="color:#34495e; line-height:1.8;">
+<li><b>不支持图形验证码 / 动态短信码</b>：这是 SSO 系统本身的限制，无法自动化。
+带验证码的 OA 可能要每天手动登一次（cookie 复用至少能撑 8-24 小时）</li>
+<li><b>不支持人脸 / 指纹</b>：同上</li>
+<li>选择器失效（页面改版）需要重新录制登录模板</li>
+</ul>
 """
         return self._make_scroll_tab(content)
 

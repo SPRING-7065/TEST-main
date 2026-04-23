@@ -67,6 +67,6 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: WebAutoDownloader_Windows
-        path: WebAutoDownloader_v1.1.5_*.zip
+        path: WebAutoDownloader_v1.2.0_*.zip
         retention-days: 30
         if-no-files-found: error

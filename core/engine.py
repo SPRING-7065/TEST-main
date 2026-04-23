@@ -306,6 +306,15 @@ class ExecutionEngine:
         except Exception:
             pass
 
+        # v1.2.0: 登录模板在所有业务步骤之前执行
+        # 顺序：浏览器就绪 → 登录模板（按需）→ 业务步骤
+        try:
+            self._run_login_template_if_needed()
+        except TaskExecutionError:
+            raise
+        except Exception as e:
+            raise TaskExecutionError(f"登录模板执行异常：{logger.translate_exception(e)}")
+
         total_steps = len(self.task.steps)
         self._log(f"任务【{self.task.name}】浏览器就绪，共 {total_steps} 个步骤，开始执行...")
 
@@ -357,6 +366,149 @@ class ExecutionEngine:
             self._log(f"任务【{self.task.name}】所有步骤执行完毕！", "success")
 
         return True
+
+    # ─────────────────────────────────────────────
+    # 登录模板（v1.2.0）
+    # ─────────────────────────────────────────────
+    def _run_login_template_if_needed(self) -> None:
+        """业务步骤前执行登录模板。
+        流程：访问入口页 → 检测已登录标志 → 未登录则回放登录动作 → 复检。
+        """
+        tpl = self.task.login_template
+        if not tpl or not tpl.is_configured():
+            return
+
+        from storage.credentials import get_credentials
+
+        # 模板首步通常是 open_url 进入登录页/入口页；先执行它再判断登录态
+        first = tpl.actions[0] if tpl.actions else None
+        first_is_open = bool(
+            first and first.action_type == "open_url" and (first.value or first.selector)
+        )
+        if first_is_open:
+            try:
+                url = parse_variables(first.value or first.selector)
+                self._log(f"  🌐 登录-访问入口页：{url[:80]}")
+                self._page.get(url, timeout=30)
+                self._wait_for_page_load(15)
+            except Exception as e:
+                self._log(f"  ⚠️ 登录入口页打开失败：{logger.translate_exception(e)}", "warning")
+                return
+
+        # cookie 复用：若检测到已登录标志，跳过整个登录流程
+        if self._check_logged_in(tpl):
+            self._log("  ✅ 检测到已登录（cookie 复用），跳过登录模板", "success")
+            return
+
+        creds = get_credentials(self.task.task_id)
+        if not creds:
+            raise TaskExecutionError(
+                "登录模板已启用但未在密钥库中找到账号密码。"
+                "请打开任务编辑器 → 🔐 登录 Tab 配置凭据后重试。"
+            )
+        username, password = creds
+        self._log("  🔐 检测到未登录，开始回放登录模板")
+
+        # 已经执行过的首步要跳过
+        replay_actions = tpl.actions[1:] if first_is_open else tpl.actions
+        for idx, action in enumerate(replay_actions, start=1):
+            try:
+                self._execute_login_action(action, username, password)
+            except Exception as e:
+                raise TaskExecutionError(
+                    f"登录第 {idx} 步失败：{logger.translate_exception(e)}"
+                )
+
+        time.sleep(2)
+        if not self._check_logged_in(tpl):
+            raise TaskExecutionError(
+                "登录回放完毕但仍未检测到登录态。"
+                "请确认账号密码正确、已登录标志元素仍有效。"
+            )
+        self._log("  ✅ 登录成功，会话已建立", "success")
+
+    def _check_logged_in(self, tpl) -> bool:
+        """检测页面是否已存在已登录标志元素"""
+        if not tpl.skip_check_selector:
+            return False
+        try:
+            timeout = max(1, int(tpl.skip_check_timeout_sec))
+            sel = tpl.skip_check_selector
+            # 复用 _find_element 的 selector 解析（统一 css/xpath/text 前缀）
+            element = self._page.ele(
+                f"xpath:{sel}" if sel.startswith("/") else sel,
+                timeout=timeout,
+            )
+            if not element:
+                return False
+            if tpl.skip_check_type == "text_contains" and tpl.skip_check_value:
+                try:
+                    text = element.text or ""
+                    return tpl.skip_check_value in text
+                except Exception:
+                    return False
+            return True  # exists
+        except Exception:
+            return False
+
+    def _execute_login_action(self, action, username: str, password: str) -> None:
+        """执行单条登录动作。
+
+        🔒 安全约束：
+        - ${username} / ${password} 仅在调用 input.run_js 之前的最后一刻替换
+        - 所有日志使用 redacted_val（含 ${password} 占位符的整体显示为 ***）
+        - real_value 局部变量出此函数即销毁
+        """
+        at = action.action_type
+        sel = action.selector
+        sel_type = action.selector_type or "css"
+        raw_val = action.value or ""
+        redacted_val = "***" if "${password}" in raw_val else raw_val
+
+        if at == "open_url":
+            url = parse_variables(raw_val or sel)
+            self._log(f"    🌐 登录-访问：{url[:80]}")
+            self._page.get(url, timeout=30)
+            self._wait_for_page_load(15)
+        elif at == "click":
+            self._log(f"    🖱️ 登录-点击：{(sel or '')[:60]}")
+            element = self._find_element(sel, sel_type, 15)
+            self._do_click(element)
+        elif at == "input":
+            real_value = raw_val.replace("${username}", username).replace("${password}", password)
+            self._log(f"    ⌨️ 登录-输入：{redacted_val[:30]}")
+            element = self._find_element(sel, sel_type, 15)
+            element.clear()
+            time.sleep(0.2)
+            try:
+                element.click()
+                time.sleep(0.1)
+                element.run_js("""
+                    var value = arguments[0];
+                    var tag = this.tagName.toLowerCase();
+                    var proto = tag === 'textarea'
+                        ? window.HTMLTextAreaElement.prototype
+                        : window.HTMLInputElement.prototype;
+                    var setter = Object.getOwnPropertyDescriptor(proto, 'value').set;
+                    setter.call(this, value);
+                    this.dispatchEvent(new Event('input', { bubbles: true }));
+                    this.dispatchEvent(new Event('change', { bubbles: true }));
+                """, real_value)
+            except Exception:
+                element.clear()
+                element.input(real_value)
+            del real_value
+        elif at == "wait":
+            try:
+                wait_seconds = float(raw_val) if raw_val else 1.0
+            except ValueError:
+                wait_seconds = 1.0
+            time.sleep(min(wait_seconds, 30))
+        else:
+            self._log(f"    ⚠️ 未知登录动作类型：{at}，已跳过", "warning")
+
+        if action.wait_after_ms > 0:
+            time.sleep(min(action.wait_after_ms, 10000) / 1000.0)
 
     def _execute_step(self, step: Step, download_dir: str) -> None:
         value = parse_variables(step.value)

@@ -90,6 +90,15 @@ class TaskCard(QFrame):
                 "border-radius:10px; font-size:11px;"
             )
             name_row.addWidget(sched_label)
+        # 登录模板已配置时显示标识
+        if (getattr(self.task, "login_template", None)
+                and self.task.login_template.enabled):
+            login_label = QLabel("🔐 自动登录")
+            login_label.setStyleSheet(
+                "background:#fef9e7; color:#7d6608; padding:2px 8px;"
+                "border-radius:10px; font-size:11px;"
+            )
+            name_row.addWidget(login_label)
         name_row.addStretch()
         info.addLayout(name_row)
 
