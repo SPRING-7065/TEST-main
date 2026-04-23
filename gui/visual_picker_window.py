@@ -514,8 +514,15 @@ class VisualPickerWindow(QWidget):
 
         layout.addWidget(QLabel("步骤类型"))
         self.step_type_combo = QComboBox()
+        # 排除：OPEN_URL（不需要从浏览器拾取）
+        # v1.3.0：UPLOAD_FILE / READ_EXCEL / APPEND_EXCEL 不从浏览器拾取，
+        # 只在编辑器手动配置；EXTRACT_DOM 可以拾取（用 value_input 当变量名输入）
+        _picker_excluded = {
+            StepType.OPEN_URL, StepType.UPLOAD_FILE,
+            StepType.READ_EXCEL, StepType.APPEND_EXCEL,
+        }
         for step_type, label in STEP_TYPE_LABELS.items():
-            if step_type != StepType.OPEN_URL:
+            if step_type not in _picker_excluded:
                 self.step_type_combo.addItem(label, step_type)
         self.step_type_combo.currentIndexChanged.connect(self._on_step_type_changed)
         layout.addWidget(self.step_type_combo)
@@ -1029,9 +1036,11 @@ class VisualPickerWindow(QWidget):
     # ── 步骤手动添加 ────────────────────────────────
     def _on_step_type_changed(self):
         step_type = self.step_type_combo.currentData()
+        # v1.3.0：EXTRACT_DOM 也用 value_input，但当作"变量名"
         show_value = step_type in (
             StepType.INPUT, StepType.SELECT,
-            StepType.WAIT, StepType.SCROLL, StepType.WAIT_ELEMENT
+            StepType.WAIT, StepType.SCROLL, StepType.WAIT_ELEMENT,
+            StepType.EXTRACT_DOM,
         )
         self.value_label.setVisible(show_value)
         self.value_input.setVisible(show_value)
@@ -1039,7 +1048,7 @@ class VisualPickerWindow(QWidget):
 
         if step_type == StepType.INPUT:
             self.value_label.setText("输入内容：")
-            self.value_input.setPlaceholderText("支持 [TODAY]、[TODAY-1] 等占位符")
+            self.value_input.setPlaceholderText("支持 ${变量} [TODAY] 等占位符")
         elif step_type == StepType.SELECT:
             self.value_label.setText("选择选项：")
             self.value_input.setPlaceholderText("下拉框的选项文字或值")
@@ -1049,6 +1058,9 @@ class VisualPickerWindow(QWidget):
         elif step_type == StepType.SCROLL:
             self.value_label.setText("滚动方向：")
             self.value_input.setPlaceholderText("bottom / top / 像素数")
+        elif step_type == StepType.EXTRACT_DOM:
+            self.value_label.setText("变量名 *：")
+            self.value_input.setPlaceholderText("如 评论列表（默认抽 innerText，详细配置去编辑器）")
 
     def _add_step(self):
         step_type = self.step_type_combo.currentData()
@@ -1063,13 +1075,29 @@ class VisualPickerWindow(QWidget):
             )
             return
 
+        # v1.3.0：EXTRACT_DOM 把 value_input 当变量名收集到 extra
+        extra = {}
+        step_value = value
+        if step_type == StepType.EXTRACT_DOM:
+            if not value:
+                QMessageBox.warning(self, "配置不完整", "请填写变量名！")
+                return
+            extra = {
+                "var_name": value,
+                "attribute": "innerText",
+                "concat_all": False,
+                "separator": "\n",
+            }
+            step_value = ""  # value 字段不再存数据
+
         step = Step(
             step_type=step_type,
             description=description,
             selector=selector,
             selector_type="css",
-            value=value,
+            value=step_value,
             timeout=120,
+            extra=extra,
         )
         self.step_configured.emit(step)
 

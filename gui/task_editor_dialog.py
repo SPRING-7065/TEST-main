@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (
     QGroupBox, QCheckBox, QComboBox, QSpinBox, QTimeEdit,
     QMessageBox, QWidget, QSplitter, QFrame, QScrollArea,
     QButtonGroup, QRadioButton, QGridLayout, QTabWidget,
-    QFileDialog
+    QFileDialog, QTableWidget, QTableWidgetItem, QHeaderView
 )
 from PySide6.QtCore import Qt, QTime, Signal
 from PySide6.QtGui import QFont
@@ -121,6 +121,9 @@ class ManualStepDialog(QDialog):
         layout.addWidget(self.selector_warn_label)
         self.selector_input.textChanged.connect(self._check_selector_warn)
 
+        # v1.3.0：4 个新步骤类型的专属配置组（默认隐藏，按类型切换显示）
+        self._build_v130_groups(layout)
+
         # 占位符说明
         hint_box = QGroupBox("💡 时间占位符说明")
         hint_layout = QVBoxLayout(hint_box)
@@ -171,7 +174,210 @@ class ManualStepDialog(QDialog):
                 self.sel_type_combo.setCurrentIndex(i)
                 break
 
+        self._load_v130_extra()
         self._on_type_changed()
+
+    # ─── v1.3.0 专属配置组 ───────────────────────────
+    def _build_v130_groups(self, parent_layout: QVBoxLayout):
+        """构建 4 个新步骤类型的配置 GroupBox（默认隐藏）"""
+        # ─ UPLOAD_FILE ─
+        self._upload_group = QGroupBox("📤 文件上传配置")
+        u_layout = QGridLayout(self._upload_group)
+        u_layout.setColumnStretch(1, 1)
+        u_layout.addWidget(QLabel("文件路径："), 0, 0)
+        self.upload_path_input = QLineEdit()
+        self.upload_path_input.setPlaceholderText("支持 ${last_download} 或绝对路径，例：${last_download}")
+        u_layout.addWidget(self.upload_path_input, 0, 1)
+        upload_browse_btn = QPushButton("📁 浏览")
+        upload_browse_btn.setFixedWidth(80)
+        upload_browse_btn.clicked.connect(self._browse_upload_file)
+        u_layout.addWidget(upload_browse_btn, 0, 2)
+        u_hint = QLabel("提示：选择器对准「附件 / 上传」按钮即可，引擎会自动找附近隐藏的 input[type=file]")
+        u_hint.setWordWrap(True)
+        u_hint.setStyleSheet("color:#7d6608; font-size:11px; background:#fef9e7; padding:6px; border-radius:3px;")
+        u_layout.addWidget(u_hint, 1, 0, 1, 3)
+        parent_layout.addWidget(self._upload_group)
+
+        # ─ EXTRACT_DOM ─
+        self._extract_group = QGroupBox("🔎 抽取元素到变量")
+        e_layout = QGridLayout(self._extract_group)
+        e_layout.setColumnStretch(1, 1)
+        e_layout.addWidget(QLabel("变量名 *："), 0, 0)
+        self.extract_var_input = QLineEdit()
+        self.extract_var_input.setPlaceholderText("例如：评论列表（后续步骤用 ${评论列表} 引用）")
+        e_layout.addWidget(self.extract_var_input, 0, 1, 1, 2)
+
+        e_layout.addWidget(QLabel("抽取属性："), 1, 0)
+        self.extract_attr_combo = QComboBox()
+        self.extract_attr_combo.setEditable(True)
+        for attr in ("innerText", "innerHTML", "value", "href", "src",
+                     "title", "alt", "data-id", "data-value"):
+            self.extract_attr_combo.addItem(attr)
+        self.extract_attr_combo.setCurrentText("innerText")
+        e_layout.addWidget(self.extract_attr_combo, 1, 1, 1, 2)
+
+        self.extract_concat_check = QCheckBox("匹配多个时取全部并拼接（舆情、新闻列表场景）")
+        e_layout.addWidget(self.extract_concat_check, 2, 0, 1, 3)
+
+        e_layout.addWidget(QLabel("分隔符："), 3, 0)
+        self.extract_sep_input = QLineEdit()
+        self.extract_sep_input.setText("\\n")
+        self.extract_sep_input.setPlaceholderText("拼接时的分隔，\\n 表示换行")
+        e_layout.addWidget(self.extract_sep_input, 3, 1, 1, 2)
+        parent_layout.addWidget(self._extract_group)
+
+        # ─ READ_EXCEL ─
+        self._read_excel_group = QGroupBox("📊 读取 Excel 配置")
+        r_layout = QGridLayout(self._read_excel_group)
+        r_layout.setColumnStretch(1, 1)
+        r_layout.addWidget(QLabel("xlsx 文件 *："), 0, 0)
+        self.read_path_input = QLineEdit()
+        self.read_path_input.setPlaceholderText("绝对路径，支持变量")
+        r_layout.addWidget(self.read_path_input, 0, 1)
+        read_browse_btn = QPushButton("📁 浏览")
+        read_browse_btn.setFixedWidth(80)
+        read_browse_btn.clicked.connect(lambda: self._browse_excel(self.read_path_input))
+        r_layout.addWidget(read_browse_btn, 0, 2)
+
+        r_layout.addWidget(QLabel("Sheet 名："), 1, 0)
+        self.read_sheet_input = QLineEdit()
+        self.read_sheet_input.setPlaceholderText("留空表示首个 sheet")
+        r_layout.addWidget(self.read_sheet_input, 1, 1, 1, 2)
+
+        r_layout.addWidget(QLabel("范围："), 2, 0)
+        self.read_range_input = QLineEdit()
+        self.read_range_input.setText("all")
+        self.read_range_input.setPlaceholderText("all=整表  A=A列  3=第3行  B2=单元格  A1:C10=区域")
+        r_layout.addWidget(self.read_range_input, 2, 1, 1, 2)
+
+        r_layout.addWidget(QLabel("输出格式："), 3, 0)
+        self.read_format_combo = QComboBox()
+        self.read_format_combo.addItem("Markdown 表格（AI 友好）", "markdown")
+        self.read_format_combo.addItem("CSV", "csv")
+        self.read_format_combo.addItem("JSON", "json")
+        r_layout.addWidget(self.read_format_combo, 3, 1, 1, 2)
+
+        r_layout.addWidget(QLabel("写入变量 *："), 4, 0)
+        self.read_var_input = QLineEdit()
+        self.read_var_input.setPlaceholderText("例如：客户表（后续用 ${客户表} 引用）")
+        r_layout.addWidget(self.read_var_input, 4, 1, 1, 2)
+        parent_layout.addWidget(self._read_excel_group)
+
+        # ─ APPEND_EXCEL ─
+        self._append_excel_group = QGroupBox("📝 追加 Excel 配置")
+        a_layout = QGridLayout(self._append_excel_group)
+        a_layout.setColumnStretch(1, 1)
+        a_layout.addWidget(QLabel("xlsx 文件 *："), 0, 0)
+        self.append_path_input = QLineEdit()
+        self.append_path_input.setPlaceholderText("绝对路径，文件不存在会自动创建")
+        a_layout.addWidget(self.append_path_input, 0, 1)
+        append_browse_btn = QPushButton("📁 浏览")
+        append_browse_btn.setFixedWidth(80)
+        append_browse_btn.clicked.connect(lambda: self._browse_excel(self.append_path_input, save_mode=True))
+        a_layout.addWidget(append_browse_btn, 0, 2)
+
+        a_layout.addWidget(QLabel("Sheet 名："), 1, 0)
+        self.append_sheet_input = QLineEdit()
+        self.append_sheet_input.setText("Sheet1")
+        a_layout.addWidget(self.append_sheet_input, 1, 1, 1, 2)
+
+        a_layout.addWidget(QLabel("列映射 *："), 2, 0, Qt.AlignTop)
+        self.append_table = QTableWidget(0, 2)
+        self.append_table.setHorizontalHeaderLabels(["列名", "值（支持 ${变量} 与 [TODAY] [NOW]）"])
+        self.append_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        self.append_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self.append_table.setMinimumHeight(120)
+        a_layout.addWidget(self.append_table, 2, 1, 1, 2)
+
+        map_btns = QHBoxLayout()
+        add_row_btn = QPushButton("➕ 加一列")
+        add_row_btn.clicked.connect(lambda: self._append_table_add_row("", ""))
+        map_btns.addWidget(add_row_btn)
+        del_row_btn = QPushButton("➖ 删除选中")
+        del_row_btn.clicked.connect(self._append_table_del_row)
+        map_btns.addWidget(del_row_btn)
+        map_btns.addStretch()
+        a_layout.addLayout(map_btns, 3, 1, 1, 2)
+
+        self.append_auto_header_check = QCheckBox("文件/Sheet 不存在时自动创建（含表头）")
+        self.append_auto_header_check.setChecked(True)
+        a_layout.addWidget(self.append_auto_header_check, 4, 0, 1, 3)
+
+        a_layout.addWidget(QLabel("展开列表变量（可选）："), 5, 0)
+        self.append_list_var_input = QLineEdit()
+        self.append_list_var_input.setPlaceholderText("如：评论列表，按分隔符拆成多行；行内可用 ${item}")
+        a_layout.addWidget(self.append_list_var_input, 5, 1, 1, 2)
+
+        a_layout.addWidget(QLabel("列表分隔符："), 6, 0)
+        self.append_list_sep_input = QLineEdit()
+        self.append_list_sep_input.setText("\\n")
+        a_layout.addWidget(self.append_list_sep_input, 6, 1, 1, 2)
+        parent_layout.addWidget(self._append_excel_group)
+
+        # 初始全部隐藏（_on_type_changed 按当前类型再展示）
+        self._upload_group.setVisible(False)
+        self._extract_group.setVisible(False)
+        self._read_excel_group.setVisible(False)
+        self._append_excel_group.setVisible(False)
+
+    def _browse_upload_file(self):
+        path, _ = QFileDialog.getOpenFileName(self, "选择要上传的文件", "", "所有文件 (*)")
+        if path:
+            self.upload_path_input.setText(path)
+
+    def _browse_excel(self, target_input: QLineEdit, save_mode: bool = False):
+        if save_mode:
+            path, _ = QFileDialog.getSaveFileName(self, "选择/新建 xlsx", "", "Excel (*.xlsx)")
+        else:
+            path, _ = QFileDialog.getOpenFileName(self, "选择 xlsx", "", "Excel (*.xlsx)")
+        if path:
+            target_input.setText(path)
+
+    def _append_table_add_row(self, col: str, val: str):
+        r = self.append_table.rowCount()
+        self.append_table.insertRow(r)
+        self.append_table.setItem(r, 0, QTableWidgetItem(col))
+        self.append_table.setItem(r, 1, QTableWidgetItem(val))
+
+    def _append_table_del_row(self):
+        rows = sorted({i.row() for i in self.append_table.selectedIndexes()}, reverse=True)
+        for r in rows:
+            self.append_table.removeRow(r)
+
+    def _load_v130_extra(self):
+        """从 self.step.extra 反向回填到 v1.3.0 控件"""
+        e = self.step.extra or {}
+        st = self.step.step_type
+
+        if st == StepType.UPLOAD_FILE:
+            self.upload_path_input.setText(e.get("file_path", ""))
+        elif st == StepType.EXTRACT_DOM:
+            self.extract_var_input.setText(e.get("var_name", ""))
+            attr = e.get("attribute", "innerText")
+            self.extract_attr_combo.setCurrentText(attr)
+            self.extract_concat_check.setChecked(bool(e.get("concat_all")))
+            sep = e.get("separator", "\n")
+            self.extract_sep_input.setText(sep.replace("\n", "\\n").replace("\t", "\\t"))
+        elif st == StepType.READ_EXCEL:
+            self.read_path_input.setText(e.get("file_path", ""))
+            self.read_sheet_input.setText(e.get("sheet", ""))
+            self.read_range_input.setText(e.get("range", "all"))
+            fmt = e.get("format", "markdown")
+            for i in range(self.read_format_combo.count()):
+                if self.read_format_combo.itemData(i) == fmt:
+                    self.read_format_combo.setCurrentIndex(i)
+                    break
+            self.read_var_input.setText(e.get("var_name", ""))
+        elif st == StepType.APPEND_EXCEL:
+            self.append_path_input.setText(e.get("file_path", ""))
+            self.append_sheet_input.setText(e.get("sheet", "Sheet1"))
+            self.append_table.setRowCount(0)
+            for m in (e.get("mappings") or []):
+                self._append_table_add_row(m.get("column", ""), m.get("value_template", ""))
+            self.append_auto_header_check.setChecked(bool(e.get("auto_create_header", True)))
+            self.append_list_var_input.setText(e.get("from_list_var", ""))
+            sep = e.get("list_separator", "\n")
+            self.append_list_sep_input.setText(sep.replace("\n", "\\n").replace("\t", "\\t"))
 
     def _check_selector_warn(self, text: str):
         """当选择器是纯标签名时显示警告"""
@@ -187,7 +393,10 @@ class ManualStepDialog(QDialog):
         stype = self.type_combo.currentData()
 
         # 控制选择器显示
-        need_selector = stype not in (StepType.OPEN_URL, StepType.WAIT)
+        # v1.3.0：READ_EXCEL / APPEND_EXCEL 不需要 selector，UPLOAD_FILE / EXTRACT_DOM 需要
+        no_selector_types = (StepType.OPEN_URL, StepType.WAIT,
+                              StepType.READ_EXCEL, StepType.APPEND_EXCEL)
+        need_selector = stype not in no_selector_types
         self.selector_label.setVisible(need_selector)
         self.selector_input.setVisible(need_selector)
         self.sel_type_combo.setVisible(need_selector)
@@ -195,7 +404,7 @@ class ManualStepDialog(QDialog):
         if not need_selector and hasattr(self, 'selector_warn_label'):
             self.selector_warn_label.setVisible(False)
 
-        # 控制值显示及提示
+        # 控制值显示及提示（老 value 字段；v1.3.0 新类型一律不用 value）
         need_value = stype in (
             StepType.OPEN_URL, StepType.INPUT, StepType.SELECT,
             StepType.WAIT, StepType.SCROLL
@@ -208,7 +417,7 @@ class ManualStepDialog(QDialog):
             self.value_input.setPlaceholderText("https://www.example.com")
         elif stype == StepType.INPUT:
             self.value_label.setText("输入内容 *：")
-            self.value_input.setPlaceholderText("支持占位符：[TODAY] [TODAY-1] [MONTH_START]")
+            self.value_input.setPlaceholderText("支持 ${变量名} [TODAY] [TODAY-1] [MONTH_START]")
         elif stype == StepType.SELECT:
             self.value_label.setText("选择选项 *：")
             self.value_input.setPlaceholderText("下拉框的选项文字")
@@ -219,6 +428,13 @@ class ManualStepDialog(QDialog):
             self.value_label.setText("滚动方式：")
             self.value_input.setPlaceholderText("bottom=底部  top=顶部  数字=像素数")
 
+        # v1.3.0：4 个新类型的专属配置组按当前类型显隐
+        if hasattr(self, "_upload_group"):
+            self._upload_group.setVisible(stype == StepType.UPLOAD_FILE)
+            self._extract_group.setVisible(stype == StepType.EXTRACT_DOM)
+            self._read_excel_group.setVisible(stype == StepType.READ_EXCEL)
+            self._append_excel_group.setVisible(stype == StepType.APPEND_EXCEL)
+
     def _on_ok(self):
         """保存步骤"""
         stype = self.type_combo.currentData()
@@ -227,9 +443,70 @@ class ManualStepDialog(QDialog):
         if stype == StepType.OPEN_URL and not self.value_input.text().strip():
             QMessageBox.warning(self, "提示", "请填写网页地址！")
             return
-        if stype not in (StepType.OPEN_URL, StepType.WAIT) and not self.selector_input.text().strip():
+        # v1.3.0：READ_EXCEL / APPEND_EXCEL 不需要选择器
+        no_selector_types = (StepType.OPEN_URL, StepType.WAIT,
+                              StepType.READ_EXCEL, StepType.APPEND_EXCEL)
+        if stype not in no_selector_types and not self.selector_input.text().strip():
             QMessageBox.warning(self, "提示", "请填写CSS选择器！\n（可使用可视化拾取自动获取）")
             return
+
+        # v1.3.0 新类型：收集 extra
+        extra: dict = {}
+        if stype == StepType.UPLOAD_FILE:
+            fp = self.upload_path_input.text().strip()
+            if not fp:
+                QMessageBox.warning(self, "提示", "请填写要上传的文件路径！")
+                return
+            extra["file_path"] = fp
+        elif stype == StepType.EXTRACT_DOM:
+            vn = self.extract_var_input.text().strip()
+            if not vn:
+                QMessageBox.warning(self, "提示", "请填写变量名！")
+                return
+            extra["var_name"] = vn
+            extra["attribute"] = self.extract_attr_combo.currentText().strip() or "innerText"
+            extra["concat_all"] = self.extract_concat_check.isChecked()
+            sep_raw = self.extract_sep_input.text()
+            extra["separator"] = sep_raw.replace("\\n", "\n").replace("\\t", "\t")
+        elif stype == StepType.READ_EXCEL:
+            fp = self.read_path_input.text().strip()
+            if not fp:
+                QMessageBox.warning(self, "提示", "请填写 xlsx 文件路径！")
+                return
+            vn = self.read_var_input.text().strip()
+            if not vn:
+                QMessageBox.warning(self, "提示", "请填写写入变量名！")
+                return
+            extra["file_path"] = fp
+            extra["sheet"] = self.read_sheet_input.text().strip()
+            extra["range"] = self.read_range_input.text().strip() or "all"
+            extra["format"] = self.read_format_combo.currentData() or "markdown"
+            extra["var_name"] = vn
+        elif stype == StepType.APPEND_EXCEL:
+            fp = self.append_path_input.text().strip()
+            if not fp:
+                QMessageBox.warning(self, "提示", "请填写 xlsx 文件路径！")
+                return
+            mappings = []
+            for r in range(self.append_table.rowCount()):
+                col_item = self.append_table.item(r, 0)
+                val_item = self.append_table.item(r, 1)
+                col = col_item.text().strip() if col_item else ""
+                val = val_item.text() if val_item else ""
+                if col:
+                    mappings.append({"column": col, "value_template": val})
+            if not mappings:
+                QMessageBox.warning(self, "提示", "请至少配置一行列映射！")
+                return
+            extra["file_path"] = fp
+            extra["sheet"] = self.append_sheet_input.text().strip() or "Sheet1"
+            extra["mappings"] = mappings
+            extra["auto_create_header"] = self.append_auto_header_check.isChecked()
+            list_var = self.append_list_var_input.text().strip()
+            if list_var:
+                extra["from_list_var"] = list_var
+                lsep_raw = self.append_list_sep_input.text()
+                extra["list_separator"] = lsep_raw.replace("\\n", "\n").replace("\\t", "\t")
 
         self.step.step_type = stype
         self.step.description = self.name_input.text().strip()
@@ -238,6 +515,7 @@ class ManualStepDialog(QDialog):
         self.step.value = self.value_input.text().strip()
         self.step.timeout = self.timeout_spin.value()
         self.step.optional = self.optional_check.isChecked()
+        self.step.extra = extra
 
         self.accept()
 
@@ -783,8 +1061,12 @@ class TaskEditorDialog(QDialog):
                 if step.step_type == StepType.OPEN_URL:
                     initial_url = step.value
                     break
+        # parent=self（编辑器）是关键：编辑器以 exec() 应用级模态打开，
+        # parent=None 的顶层 Tool 窗口会被模态屏蔽，导致 picker 无法点击/关闭。
+        # 把 picker 设为编辑器的子窗口即可绕过模态屏蔽（v1.1.5 之后编辑器
+        # 全程不再 hide/最小化，所以不会再触发"子 Tool 跟着隐藏"的旧 bug）
         self._picker_window = VisualPickerWindow(
-            None, initial_url=initial_url, mode="login"
+            self, initial_url=initial_url, mode="login"
         )
         self._picker_window.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
         self._picker_window.login_recorded.connect(self._on_login_recorded)
@@ -827,8 +1109,9 @@ class TaskEditorDialog(QDialog):
                 if step.step_type == StepType.OPEN_URL:
                     initial_url = step.value
                     break
+        # parent=self 同上：避免被编辑器的应用级模态屏蔽
         self._picker_window = VisualPickerWindow(
-            None, initial_url=initial_url, mode="pick_one"
+            self, initial_url=initial_url, mode="pick_one"
         )
         self._picker_window.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
         self._picker_window.single_element_picked.connect(self._on_skip_check_picked)
@@ -988,10 +1271,13 @@ class TaskEditorDialog(QDialog):
             self._picker_window = existing
             return
 
-        # 关键：parent=None，picker 完全独立于编辑器
-        # （如果 parent=editor，editor 隐藏/最小化时 Tool 子窗口也会跟着隐藏，
-        # 之前 v1.1.4 拾取控制台被一起隐藏的 bug 就是这个原因）
-        self._picker_window = VisualPickerWindow(None, initial_url=initial_url)
+        # parent=self：编辑器以 exec() 应用级模态打开，
+        # 若 picker 顶层独立（parent=None），整个窗口会被模态屏蔽，
+        # 用户点不动按钮也关不掉（v1.2.0 报告的"登录录制控制台无法交互"）。
+        # 改成编辑器的子窗口即可绕过模态屏蔽。
+        # （v1.1.5 之后编辑器全程不再 hide/最小化，
+        # 不会再触发"子 Tool 跟着编辑器一起隐藏"的旧 bug）
+        self._picker_window = VisualPickerWindow(self, initial_url=initial_url)
         self._picker_window.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
         self._picker_window.step_configured.connect(self._on_step_from_picker)
         # picker 关闭后恢复主窗口（不动编辑器）

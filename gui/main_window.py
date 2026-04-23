@@ -38,7 +38,7 @@ class MainWindow(QMainWindow):
  
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("🤖 网页自动取数助手 v1.2.0")
+        self.setWindowTitle("🤖 网页自动取数助手 v1.3.0")
         self.setMinimumSize(900, 560)
         self.resize(1100, 700)
 
@@ -410,9 +410,10 @@ class MainWindow(QMainWindow):
             b64 = base64.b64encode(img_bytes).decode()
             self._log_bridge.new_log.emit(f"__SCREENSHOT__{task_id}__{b64}")
 
-        def on_progress(current: int, total: int, step_name: str):
+        def on_progress(current: int, total: int, step_name: str, state: str = "running"):
+            # state 段位于 task_id 后，保持 step_name 在末尾以便老解析能 join 出来
             self._log_bridge.new_log.emit(
-                f"__PROGRESS__{task_id}__{current}__{total}__{step_name}"
+                f"__PROGRESS__{task_id}__{state}__{current}__{total}__{step_name}"
             )
 
         runner = run_task_in_thread(
@@ -498,6 +499,23 @@ class MainWindow(QMainWindow):
 
         if message.startswith("__PROGRESS__"):
             parts = message.split("__")
+            # 新协议：__PROGRESS__<id>__<state>__<cur>__<total>__<name>
+            # 老协议：__PROGRESS__<id>__<cur>__<total>__<name>
+            if len(parts) >= 7:
+                task_id = parts[2]
+                state = parts[3]
+                # 新协议：state 不可解析为整数（防止 task_id 含数字误判）
+                try:
+                    current = int(parts[4])
+                    total = int(parts[5])
+                    step_name = "__".join(parts[6:])
+                    self._task_list_widget.update_task_progress(
+                        task_id, current, total, step_name, state
+                    )
+                    return
+                except ValueError:
+                    pass
+            # 兼容老协议
             if len(parts) >= 6:
                 task_id = parts[2]
                 try:

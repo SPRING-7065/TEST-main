@@ -285,11 +285,19 @@ class TaskCard(QFrame):
         elif action == debug_action:
             self.run_clicked.emit(self.task.task_id, True)
 
-    def update_progress(self, current: int, total: int, step_name: str):
+    def update_progress(self, current: int, total: int, step_name: str,
+                         state: str = "running"):
         self.progress_widget.setVisible(True)
         self.progress_bar.setMaximum(total)
         self.progress_bar.setValue(current)
-        self.progress_label.setText(f"[{current}/{total}] {step_name[:28]}")
+        # v1.3.0：state 决定前缀图标，让用户一眼看到当前是在跑还是刚跑完
+        icon = {
+            "running": "⏳",
+            "done":    "✅",
+            "skipped": "⚠️",
+            "failed":  "❌",
+        }.get(state, "•")
+        self.progress_label.setText(f"[{current}/{total}] {icon} {step_name[:28]}")
 
     def update_screenshot(self, img_bytes: bytes):
         try:
@@ -454,10 +462,11 @@ class TaskListWidget(QWidget):
         self._cards_layout.addStretch()
 
     def update_task_progress(self, task_id: str,
-                              current: int, total: int, step_name: str):
+                              current: int, total: int, step_name: str,
+                              state: str = "running"):
         card = self._cards.get(task_id)
         if card:
-            card.update_progress(current, total, step_name)
+            card.update_progress(current, total, step_name, state)
 
     def update_task_status_only(self, task_id: str):
         """仅刷新指定任务卡的状态显示，不影响其他卡的截图/进度。

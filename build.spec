@@ -53,6 +53,13 @@ hidden_imports = [
     'jaraco.context',
     'jaraco.functools',
 
+    # openpyxl（v1.3.0 Excel 读写步骤）
+    'openpyxl',
+    'openpyxl.workbook',
+    'openpyxl.worksheet',
+    'openpyxl.utils',
+    'et_xmlfile',
+
     # 标准库
     'json',
     'uuid',

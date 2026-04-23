@@ -4,7 +4,7 @@
 """
 import re
 import datetime
-from typing import Optional
+from typing import Optional, Dict
  
 # 支持的日期格式选项
 DATE_FORMATS = {
@@ -21,10 +21,11 @@ DATE_FORMATS = {
 DEFAULT_DATE_FORMAT = "yyyy-MM-dd"
  
 def parse_variables(text: str, date_format: str = DEFAULT_DATE_FORMAT,
-                    execution_date: Optional[datetime.date] = None) -> str:
+                    execution_date: Optional[datetime.date] = None,
+                    runtime_vars: Optional[Dict[str, str]] = None) -> str:
     """
     解析文本中的所有动态变量占位符
- 
+
     支持的占位符：
     - [TODAY]           → 今天日期
     - [TODAY-X]         → 今天往前推X天
@@ -34,18 +35,31 @@ def parse_variables(text: str, date_format: str = DEFAULT_DATE_FORMAT,
     - [MONTH_END]       → 本月最后一天
     - [YEAR_START]      → 今年第一天
     - [NOW_TIMESTAMP]   → 当前时间戳（yyyyMMdd_HHmmss格式，用于文件命名）
- 
+    - [NOW]             → 当前时间（yyyy-MM-dd HH:mm:ss，v1.3.0 起用于 Excel 归档）
+    - ${var_name}       → 运行时变量插值（v1.3.0 起，包括 ${last_download} ${download_N} 与 EXTRACT_DOM/READ_EXCEL 写入的变量）
+
     Args:
         text: 包含占位符的原始文本
         date_format: 日期输出格式（使用DATE_FORMATS中的key）
         execution_date: 执行日期（默认为今天，测试时可指定）
- 
+        runtime_vars: 运行时变量字典（v1.3.0），用于 ${name} 插值；
+                      未命中的 ${name} 原样保留，方便用户发现拼写错误
+
     Returns:
         替换后的文本
     """
     if not text:
         return text
- 
+
+    # v1.3.0：先做 ${name} 插值（让插值结果再经过 [XXX] 时间占位替换）
+    if runtime_vars:
+        def _sub_runtime(m: re.Match) -> str:
+            key = m.group(1)
+            if key in runtime_vars:
+                return str(runtime_vars[key])
+            return m.group(0)
+        text = re.sub(r'\$\{([\w\u4e00-\u9fa5]+)\}', _sub_runtime, text)
+
     today = execution_date or datetime.date.today()
     fmt = DATE_FORMATS.get(date_format, "%Y-%m-%d")
  
@@ -117,7 +131,11 @@ def parse_variables(text: str, date_format: str = DEFAULT_DATE_FORMAT,
     # 处理 [NOW_TIMESTAMP] - 精确时间戳
     now_ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     text = re.sub(r'\[NOW_TIMESTAMP\]', now_ts, text, flags=re.IGNORECASE)
- 
+
+    # 处理 [NOW] - 可读时间戳，便于 Excel 归档
+    now_readable = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    text = re.sub(r'\[NOW\]', now_readable, text, flags=re.IGNORECASE)
+
     return text
  
 def _format_date(date: datetime.date, fmt: str) -> str:
@@ -150,4 +168,8 @@ def get_available_placeholders() -> list:
         ("[MONTH_END]", "本月最后一天，例如：2024-01-31"),
         ("[YEAR_START]", "今年第一天，例如：2024-01-01"),
         ("[NOW_TIMESTAMP]", "当前时间戳，例如：20240115_093022（用于文件命名）"),
+        ("[NOW]", "当前时间，例如：2024-01-15 09:30:22（用于 Excel 归档）"),
+        ("${last_download}", "最近一次下载到的文件绝对路径（v1.3.0）"),
+        ("${download_1}", "第 1 个下载文件路径，依次类推 ${download_2} ${download_3}（v1.3.0）"),
+        ("${自定义变量名}", "EXTRACT_DOM/READ_EXCEL 步骤写入的变量；中文变量名也支持（v1.3.0）"),
     ]

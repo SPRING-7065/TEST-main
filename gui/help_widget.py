@@ -57,6 +57,7 @@ class HelpWidget(QWidget):
         help_tabs.addTab(self._build_steps_tab(),      "🔧 步骤类型详解")
         help_tabs.addTab(self._build_variables_tab(),  "📅 时间变量说明")
         help_tabs.addTab(self._build_login_tab(),      "🔐 登录模板")
+        help_tabs.addTab(self._build_pipeline_tab(),   "🔁 数据流转 (v1.3.0)")
         help_tabs.addTab(self._build_faq_tab(),        "❓ 常见问题")
 
         layout.addWidget(help_tabs, 1)
@@ -474,6 +475,96 @@ OA / 内网系统的登录态通常 8-24 小时就过期，每次执行任务都
 <li><b>不支持人脸 / 指纹</b>：同上</li>
 <li>选择器失效（页面改版）需要重新录制登录模板</li>
 </ul>
+"""
+        return self._make_scroll_tab(content)
+
+    def _build_pipeline_tab(self) -> QWidget:
+        content = """
+<h2 style="color:#2980b9; margin-top:0;">🔁 数据流转 + Excel/AI 集成（v1.3.0 新增）</h2>
+
+<div style="background:#e8f8f5; padding:14px; border-radius:8px;
+            border-left:5px solid #1abc9c; margin:10px 0;">
+v1.3.0 把工具从"网页自动化"升级成"<b>步骤间能传数据</b>的小流水线"，
+覆盖三类典型场景：<br>
+&nbsp;&nbsp;• <b>每日简报</b>：抓 N 个网站 → 拼成文本 → 投喂 AI 总结<br>
+&nbsp;&nbsp;• <b>跨系统搬运</b>：从 OA 下载文件 → 上传到 AI 站<br>
+&nbsp;&nbsp;• <b>舆情监控</b>：抓评论 → AI 情感分析 → 追加到 Excel 归档<br><br>
+导入 <b>samples/data_pipeline_demo.json</b> 可以看到两个示例任务。
+</div>
+
+<h3 style="color:#2c3e50; margin-top:24px;">📌 4 个新步骤类型</h3>
+
+<div style="background:#eaf2ff; padding:15px; border-radius:8px;
+            border-left:5px solid #3498db; margin:10px 0;">
+<b>📤 上传文件 (UPLOAD_FILE)</b><br><br>
+向页面上的 <code>&lt;input type="file"&gt;</code> 上传文件。<br><br>
+关键能力：选择器对准 AI 站点的「📎 附件」按钮即可，
+引擎会自动在按钮附近查找隐藏的 input[type=file]，
+ChatGPT/Claude/Kimi 等都能这么过。<br><br>
+文件路径支持变量：<code>${last_download}</code> 直接接续上一步下载的文件。
+</div>
+
+<div style="background:#fef9e7; padding:15px; border-radius:8px;
+            border-left:5px solid #f39c12; margin:10px 0;">
+<b>🔎 抽取元素到变量 (EXTRACT_DOM)</b><br><br>
+把页面元素文字 / 属性抽出来，存成命名变量供后续步骤插值使用。<br><br>
+&nbsp;&nbsp;• <b>变量名</b>：例如 <code>headlines</code>，后续用 <code>${headlines}</code> 引用<br>
+&nbsp;&nbsp;• <b>属性</b>：默认 innerText；也可选 href / src / value / 自定义属性<br>
+&nbsp;&nbsp;• <b>取全部并拼接</b>：勾选后会抓所有匹配元素（舆情、新闻列表场景），用分隔符拼成一段
+</div>
+
+<div style="background:#f3e5f5; padding:15px; border-radius:8px;
+            border-left:5px solid #8e44ad; margin:10px 0;">
+<b>📊 读取 Excel (READ_EXCEL)</b><br><br>
+把 xlsx 文件的内容读成文本变量，喂给 AI 提示框。<br><br>
+&nbsp;&nbsp;• <b>范围</b>：<code>all</code>=整表 / <code>A</code>=A列 / <code>3</code>=第3行 / <code>B2</code>=单元格 / <code>A1:C10</code>=区域<br>
+&nbsp;&nbsp;• <b>格式</b>：Markdown 表格（AI 友好，推荐） / CSV / JSON<br><br>
+也可以直接用 UPLOAD_FILE 把 xlsx 整文件投给 AI（Claude/Kimi/ChatGPT 都能解析 xlsx），
+看你想让 AI 看"原文件"还是"已结构化的文本"。
+</div>
+
+<div style="background:#fdecea; padding:15px; border-radius:8px;
+            border-left:5px solid #e74c3c; margin:10px 0;">
+<b>📝 追加 Excel (APPEND_EXCEL)</b><br><br>
+把变量插值后的列映射追加为新行（日志归档型）。<br><br>
+&nbsp;&nbsp;• <b>列映射</b>：每行配置「列名 → 值模板」，值模板里可以用 <code>${变量}</code> 和 <code>[NOW]</code><br>
+&nbsp;&nbsp;• <b>自动建表头</b>：文件/Sheet 不存在时按列映射顺序自动创建<br>
+&nbsp;&nbsp;• <b>展开列表变量</b>：如果想把 EXTRACT_DOM 抓到的多元素分别写成多行，填变量名 + 分隔符，行内用 <code>${item}</code> 引用当前项
+</div>
+
+<h3 style="color:#2c3e50; margin-top:24px;">💡 自动追踪的下载变量</h3>
+
+<div style="background:#eaf2ff; padding:15px; border-radius:8px;
+            border-left:5px solid #3498db; margin:10px 0;">
+任意 DOWNLOAD_CLICK 步骤完成后，引擎自动维护两类变量：<br><br>
+&nbsp;&nbsp;• <code>${last_download}</code> — 最近一次下载文件的绝对路径<br>
+&nbsp;&nbsp;• <code>${download_1}</code>、<code>${download_2}</code>… — 按下载顺序编号<br><br>
+配合 UPLOAD_FILE 的 <code>${last_download}</code>，可以无缝完成"下载→上传"链路。
+</div>
+
+<h3 style="color:#2c3e50; margin-top:24px;">🔗 典型流水线示例</h3>
+
+<div style="background:#f8f9fa; padding:15px; border-radius:8px;
+            border:1px solid #dee2e6; margin:10px 0; font-family:Consolas,monospace;
+            font-size:12px; color:#2c3e50;">
+<b>每日简报：</b><br>
+OPEN_URL（新闻站）<br>
+&nbsp;&nbsp;→ EXTRACT_DOM（标题列表，concat_all=true，存到 ${headlines}）<br>
+&nbsp;&nbsp;→ OPEN_URL（AI 站）<br>
+&nbsp;&nbsp;→ INPUT（提示词 ${headlines} 请帮我总结）<br><br>
+<b>跨系统搬运：</b><br>
+OPEN_URL（OA 下载页）<br>
+&nbsp;&nbsp;→ DOWNLOAD_CLICK（${last_download} 自动产生）<br>
+&nbsp;&nbsp;→ OPEN_URL（AI 站）<br>
+&nbsp;&nbsp;→ UPLOAD_FILE（${last_download}）<br>
+&nbsp;&nbsp;→ INPUT（请总结这份文件）<br><br>
+<b>舆情归档：</b><br>
+OPEN_URL（评论页）<br>
+&nbsp;&nbsp;→ EXTRACT_DOM（评论列表，存到 ${comments}）<br>
+&nbsp;&nbsp;→ OPEN_URL（AI 站）→ INPUT（${comments} 请打分）<br>
+&nbsp;&nbsp;→ EXTRACT_DOM（AI 回复，存到 ${ai_score}）<br>
+&nbsp;&nbsp;→ APPEND_EXCEL（[NOW] / 来源 / ${comments} / ${ai_score}）
+</div>
 """
         return self._make_scroll_tab(content)
 

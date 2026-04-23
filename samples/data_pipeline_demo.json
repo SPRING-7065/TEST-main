@@ -1,0 +1,140 @@
+{
+  "tasks": [
+    {
+      "task_id": "v130demo_briefing",
+      "name": "v1.3.0 演示：Hacker News 头条 → Excel 归档",
+      "description": "演示 v1.3.0 三件事：① EXTRACT_DOM 抓多元素拼接 ② [NOW] 时间占位符 ③ APPEND_EXCEL 追加归档（首次运行自动建表头）。无需登录，导入即可执行。Excel 输出路径默认在用户家目录的 v130_demo_briefing.xlsx。",
+      "steps": [
+        {
+          "step_type": "open_url",
+          "description": "打开 Hacker News",
+          "selector": "",
+          "selector_type": "css",
+          "value": "https://news.ycombinator.com/",
+          "timeout": 30,
+          "optional": false,
+          "extra": {}
+        },
+        {
+          "step_type": "wait",
+          "description": "等渲染",
+          "selector": "",
+          "selector_type": "css",
+          "value": "2",
+          "timeout": 10,
+          "optional": false,
+          "extra": {}
+        },
+        {
+          "step_type": "extract_dom",
+          "description": "抓取所有头条标题（拼成一段）",
+          "selector": ".titleline > a",
+          "selector_type": "css",
+          "value": "",
+          "timeout": 30,
+          "optional": false,
+          "extra": {
+            "var_name": "headlines",
+            "attribute": "innerText",
+            "concat_all": true,
+            "separator": "\n- "
+          }
+        },
+        {
+          "step_type": "append_excel",
+          "description": "把抓到的头条追加到归档表",
+          "selector": "",
+          "selector_type": "css",
+          "value": "",
+          "timeout": 30,
+          "optional": false,
+          "extra": {
+            "file_path": "~/v130_demo_briefing.xlsx",
+            "sheet": "归档",
+            "auto_create_header": true,
+            "mappings": [
+              {"column": "时间", "value_template": "[NOW]"},
+              {"column": "来源", "value_template": "Hacker News"},
+              {"column": "头条", "value_template": "- ${headlines}"}
+            ]
+          }
+        }
+      ],
+      "schedule": {
+        "enabled": false,
+        "schedule_type": "once",
+        "time": "09:00",
+        "weekdays": []
+      },
+      "max_retries": 1,
+      "save_dir_override": ""
+    },
+    {
+      "task_id": "v130demo_pipeline_template",
+      "name": "v1.3.0 演示：下载 → 上传 AI（模板，需自定义选择器）",
+      "description": "演示 ${last_download} 与 UPLOAD_FILE 智能查找隐藏 input。导入后请把 OPEN_URL / DOWNLOAD_CLICK 的选择器改成你常用的资料下载页；UPLOAD_FILE 的选择器对准 ChatGPT/Claude/Kimi 的「📎 附件」按钮即可（引擎自动找附近的 input[type=file]）。",
+      "steps": [
+        {
+          "step_type": "open_url",
+          "description": "打开下载源（请改成你的实际页面）",
+          "selector": "",
+          "selector_type": "css",
+          "value": "https://example.com/your-report-page",
+          "timeout": 30,
+          "optional": false,
+          "extra": {}
+        },
+        {
+          "step_type": "download_click",
+          "description": "点击下载按钮（请改 selector）",
+          "selector": "a.download-btn",
+          "selector_type": "css",
+          "value": "",
+          "timeout": 60,
+          "optional": false,
+          "extra": {}
+        },
+        {
+          "step_type": "open_url",
+          "description": "打开 AI 站点（请改成你的 AI 站）",
+          "selector": "",
+          "selector_type": "css",
+          "value": "https://chatgpt.com/",
+          "timeout": 30,
+          "optional": false,
+          "extra": {}
+        },
+        {
+          "step_type": "upload_file",
+          "description": "把刚才下载的文件上传给 AI",
+          "selector": "button[aria-label*='附件'], button[aria-label*='Attach']",
+          "selector_type": "css",
+          "value": "",
+          "timeout": 30,
+          "optional": false,
+          "extra": {
+            "file_path": "${last_download}"
+          }
+        },
+        {
+          "step_type": "input",
+          "description": "提示词",
+          "selector": "textarea",
+          "selector_type": "css",
+          "value": "请帮我用中文总结这份文件的关键要点。",
+          "timeout": 30,
+          "optional": false,
+          "extra": {}
+        }
+      ],
+      "schedule": {
+        "enabled": false,
+        "schedule_type": "once",
+        "time": "09:00",
+        "weekdays": []
+      },
+      "max_retries": 1,
+      "save_dir_override": ""
+    }
+  ]
+}

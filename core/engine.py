@@ -8,7 +8,7 @@ import time
 import datetime
 import threading
 import base64
-from typing import List, Optional, Callable
+from typing import List, Optional, Callable, Dict
 
 from models.task import Task
 from models.step import Step, StepType
@@ -149,6 +149,8 @@ class ExecutionEngine:
         self._downloaded_files: List[str] = []
         self._step_start_time: float = 0
         self._screenshot_timer: Optional[threading.Timer] = None
+        # v1.3.0: 运行时变量字典（${last_download} ${download_N} 与 EXTRACT_DOM/READ_EXCEL 写入）
+        self._runtime_vars: Dict[str, str] = {}
 
     def stop(self):
         self._stop_flag = True
@@ -168,8 +170,15 @@ class ExecutionEngine:
         if self.status_callback:
             self.status_callback(self.task.task_id, status)
 
-    def _update_progress(self, current: int, total: int, step_name: str):
-        if self.progress_callback:
+    def _update_progress(self, current: int, total: int, step_name: str,
+                          state: str = "running"):
+        """state: running / done / failed / skipped"""
+        if not self.progress_callback:
+            return
+        # 老 callback 不接 state（接 3 参），新 callback 接 4 参；兼容两种签名
+        try:
+            self.progress_callback(current, total, step_name, state)
+        except TypeError:
             self.progress_callback(current, total, step_name)
 
     def _take_screenshot(self):
@@ -240,6 +249,13 @@ class ExecutionEngine:
 
     def _execute_once(self) -> bool:
         from DrissionPage import ChromiumPage, ChromiumOptions
+
+        # v1.3.0：每次执行重置运行时变量（重试时也清空，避免上次失败留下的脏数据）
+        self._runtime_vars = {
+            "task_name": self.task.name,
+            "task_id": self.task.task_id,
+        }
+        self._downloaded_files = []
 
         options = ChromiumOptions()
         # headless 必须最先设置，避免 DrissionPage 内部初始化逻辑在后续重置显示侧 flag
@@ -327,7 +343,7 @@ class ExecutionEngine:
 
             step_name = step.get_display_name()
             self._step_start_time = time.time()
-            self._update_progress(i, total_steps, step_name)
+            self._update_progress(i, total_steps, step_name, state="running")
 
             try:
                 current_url = self._page.url
@@ -341,6 +357,7 @@ class ExecutionEngine:
                 self._execute_step(step, download_dir)
                 elapsed = time.time() - self._step_start_time
                 self._log(f"  ✓ 步骤 {i} 完成（耗时 {elapsed:.1f}s）")
+                self._update_progress(i, total_steps, step_name, state="done")
                 if self.screenshot_callback:
                     self._take_screenshot()
             except Exception as e:
@@ -353,7 +370,9 @@ class ExecutionEngine:
                         f"{logger.translate_exception(e)}",
                         "warning"
                     )
+                    self._update_progress(i, total_steps, step_name, state="skipped")
                     continue
+                self._update_progress(i, total_steps, step_name, state="failed")
                 raise
 
         if self._downloaded_files:
@@ -387,7 +406,7 @@ class ExecutionEngine:
         )
         if first_is_open:
             try:
-                url = parse_variables(first.value or first.selector)
+                url = parse_variables(first.value or first.selector, runtime_vars=self._runtime_vars)
                 self._log(f"  🌐 登录-访问入口页：{url[:80]}")
                 self._page.get(url, timeout=30)
                 self._wait_for_page_load(15)
@@ -466,7 +485,7 @@ class ExecutionEngine:
         redacted_val = "***" if "${password}" in raw_val else raw_val
 
         if at == "open_url":
-            url = parse_variables(raw_val or sel)
+            url = parse_variables(raw_val or sel, runtime_vars=self._runtime_vars)
             self._log(f"    🌐 登录-访问：{url[:80]}")
             self._page.get(url, timeout=30)
             self._wait_for_page_load(15)
@@ -511,8 +530,9 @@ class ExecutionEngine:
             time.sleep(min(action.wait_after_ms, 10000) / 1000.0)
 
     def _execute_step(self, step: Step, download_dir: str) -> None:
-        value = parse_variables(step.value)
-        selector = step.selector
+        # v1.3.0：所有文本字段都先做变量插值（含 ${name} 与 [TODAY] 等）
+        value = parse_variables(step.value, runtime_vars=self._runtime_vars)
+        selector = parse_variables(step.selector, runtime_vars=self._runtime_vars)
         timeout = step.timeout
         step_type = step.step_type
 
@@ -629,6 +649,14 @@ class ExecutionEngine:
                     self._page.scroll.down(300)
         elif step_type == StepType.DOWNLOAD_CLICK:
             self._handle_download_click(step, selector, download_dir, timeout)
+        elif step_type == StepType.UPLOAD_FILE:
+            self._handle_upload_file(step, selector, timeout)
+        elif step_type == StepType.EXTRACT_DOM:
+            self._handle_extract_dom(step, selector, timeout)
+        elif step_type == StepType.READ_EXCEL:
+            self._handle_read_excel(step)
+        elif step_type == StepType.APPEND_EXCEL:
+            self._handle_append_excel(step)
         else:
             self._log(f"  ⚠️ 未知步骤类型：{step_type}，已跳过", "warning")
 
@@ -730,6 +758,201 @@ class ExecutionEngine:
             element.run_js("this.click()")
             self._log("    ✅ JS this.click() 兜底执行", "info")
 
+    # ─────────────────────────────────────────────
+    # v1.3.0 新步骤实现
+    # ─────────────────────────────────────────────
+    def _handle_upload_file(self, step: Step, selector: str, timeout: int) -> None:
+        """UPLOAD_FILE：智能查找隐藏 input[type=file] 完成上传。
+
+        用户给的 selector 可能直接命中 input[type=file]（标准情况），
+        也可能命中"附件"按钮（AI 站点常见，真正的 input 隐藏在附近）。
+        策略：先按 selector 找元素本身；若不是 file input，再在它的子节点 →
+        父链向上 3 层 → 兄弟节点里搜 input[type=file]。
+        """
+        from core.variable_parser import parse_variables as _pv
+        file_path_raw = step.extra.get("file_path", "")
+        file_path = _pv(file_path_raw, runtime_vars=self._runtime_vars).strip()
+        if not file_path:
+            raise TaskExecutionError("上传步骤未填写文件路径")
+        file_path = os.path.expanduser(file_path)
+        if not os.path.exists(file_path):
+            raise TaskExecutionError(f"待上传文件不存在：{file_path}")
+        if not selector:
+            raise TaskExecutionError("上传步骤缺少元素选择器")
+
+        anchor = self._find_element(selector, step.selector_type, timeout)
+        target = self._locate_file_input(anchor)
+        if target is None:
+            raise TaskExecutionError(
+                f"在选择器 [{selector}] 附近未找到 input[type=file]，"
+                f"请用浏览器开发者工具找出隐藏 input 的精确选择器后再填入"
+            )
+        try:
+            target.input(file_path)
+        except Exception as e:
+            raise TaskExecutionError(f"文件上传失败：{type(e).__name__}：{e}")
+        self._log(f"  📤 已上传：{file_path}")
+
+    def _locate_file_input(self, anchor):
+        """从 anchor 开始按 子→父3层→兄弟 顺序找 input[type=file]"""
+        # 1) anchor 自己就是 file input
+        try:
+            tag = (anchor.tag or "").lower()
+            input_type = (anchor.attr("type") or "").lower()
+            if tag == "input" and input_type == "file":
+                return anchor
+        except Exception:
+            pass
+        # 2) anchor 子节点
+        try:
+            child = anchor.ele("css:input[type=file]", timeout=0.5)
+            if child:
+                return child
+        except Exception:
+            pass
+        # 3) 向上 3 层父节点，每层都搜一次
+        node = anchor
+        for _ in range(3):
+            try:
+                node = node.parent()
+                if node is None:
+                    break
+                found = node.ele("css:input[type=file]", timeout=0.5)
+                if found:
+                    return found
+            except Exception:
+                break
+        # 4) 全页兜底：有些 AI 站把 input 放在 body 末尾，与按钮没结构关联
+        try:
+            global_input = self._page.ele("css:input[type=file]", timeout=0.5)
+            if global_input:
+                self._log("    ℹ️ 未在按钮附近找到 file input，已使用页面首个 input[type=file] 兜底", "info")
+                return global_input
+        except Exception:
+            pass
+        return None
+
+    def _handle_extract_dom(self, step: Step, selector: str, timeout: int) -> None:
+        """EXTRACT_DOM：抽取元素的文字/属性到运行时变量。"""
+        var_name = (step.extra.get("var_name") or "").strip()
+        if not var_name:
+            raise TaskExecutionError("抽取步骤未填写变量名")
+        if not selector:
+            raise TaskExecutionError("抽取步骤缺少元素选择器")
+        attribute = step.extra.get("attribute") or "innerText"
+        concat_all = bool(step.extra.get("concat_all"))
+        separator = step.extra.get("separator")
+        if separator is None:
+            separator = "\n"
+
+        if concat_all:
+            # 多元素拼接：使用 page.eles 拿全部匹配
+            try:
+                if step.selector_type == "xpath":
+                    elements = self._page.eles(f"xpath:{selector}", timeout=timeout)
+                else:
+                    elements = self._page.eles(f"css:{selector}", timeout=timeout)
+            except Exception as e:
+                raise TaskExecutionError(f"查找元素失败：{type(e).__name__}：{e}")
+            if not elements:
+                raise TaskExecutionError(f"未匹配到任何元素：{selector}")
+            parts = [self._read_attr(el, attribute) for el in elements]
+            value = separator.join(p for p in parts if p)
+            self._log(f"  🔎 抽取 {len(elements)} 个元素的 {attribute} → ${{{var_name}}}")
+        else:
+            element = self._find_element(selector, step.selector_type, timeout)
+            value = self._read_attr(element, attribute)
+            self._log(f"  🔎 抽取 {attribute} → ${{{var_name}}}")
+
+        self._runtime_vars[var_name] = value
+        preview = value.replace("\n", " ⏎ ")[:80]
+        self._log(f"    内容预览：{preview}{'…' if len(value) > 80 else ''}")
+
+    @staticmethod
+    def _read_attr(element, attribute: str) -> str:
+        """统一的元素取值：innerText 走 .text，其余走 attr()"""
+        attr = (attribute or "innerText").strip()
+        if attr.lower() in ("innertext", "text", ""):
+            try:
+                return element.text or ""
+            except Exception:
+                return ""
+        if attr.lower() == "innerhtml":
+            try:
+                return element.html or ""
+            except Exception:
+                return ""
+        try:
+            v = element.attr(attr)
+            return "" if v is None else str(v)
+        except Exception:
+            return ""
+
+    def _handle_read_excel(self, step: Step) -> None:
+        """READ_EXCEL：读 xlsx 内容到变量"""
+        from core.variable_parser import parse_variables as _pv
+        from core import excel_io
+        file_path = _pv(step.extra.get("file_path", ""), runtime_vars=self._runtime_vars).strip()
+        if not file_path:
+            raise TaskExecutionError("读取 Excel 步骤未填写文件路径")
+        file_path = os.path.expanduser(file_path)
+        if not os.path.exists(file_path):
+            raise TaskExecutionError(f"Excel 文件不存在：{file_path}")
+        var_name = (step.extra.get("var_name") or "").strip()
+        if not var_name:
+            raise TaskExecutionError("读取 Excel 步骤未填写变量名")
+        sheet = step.extra.get("sheet") or None
+        range_spec = step.extra.get("range") or "all"
+        fmt = step.extra.get("format") or "markdown"
+        try:
+            content = excel_io.read_excel(file_path, sheet=sheet,
+                                           range_spec=range_spec, fmt=fmt)
+        except Exception as e:
+            raise TaskExecutionError(f"读取 Excel 失败：{type(e).__name__}：{e}")
+        self._runtime_vars[var_name] = content
+        self._log(f"  📊 读取 {os.path.basename(file_path)}!{range_spec} ({fmt}) → ${{{var_name}}}（{len(content)} 字符）")
+
+    def _handle_append_excel(self, step: Step) -> None:
+        """APPEND_EXCEL：把变量插值后的列映射追加到 xlsx"""
+        from core.variable_parser import parse_variables as _pv
+        from core import excel_io
+        file_path = _pv(step.extra.get("file_path", ""), runtime_vars=self._runtime_vars).strip()
+        if not file_path:
+            raise TaskExecutionError("追加 Excel 步骤未填写文件路径")
+        sheet = step.extra.get("sheet") or "Sheet1"
+        mappings = step.extra.get("mappings") or []
+        if not mappings:
+            raise TaskExecutionError("追加 Excel 步骤未配置任何列映射")
+        auto_create = bool(step.extra.get("auto_create_header", True))
+        from_list_var = (step.extra.get("from_list_var") or "").strip()
+        list_separator = step.extra.get("list_separator") or "\n"
+
+        if from_list_var:
+            list_value = self._runtime_vars.get(from_list_var, "")
+            items = [s for s in list_value.split(list_separator) if s]
+            if not items:
+                self._log(f"  ⚠️ 列表变量 ${{{from_list_var}}} 为空，跳过追加", "warning")
+                return
+            rows = []
+            for item in items:
+                local_vars = dict(self._runtime_vars)
+                local_vars["item"] = item
+                row = {m["column"]: _pv(m["value_template"], runtime_vars=local_vars)
+                       for m in mappings if m.get("column")}
+                rows.append(row)
+        else:
+            rows = [{
+                m["column"]: _pv(m["value_template"], runtime_vars=self._runtime_vars)
+                for m in mappings if m.get("column")
+            }]
+
+        try:
+            written = excel_io.append_excel(file_path, sheet=sheet, rows=rows,
+                                             auto_create_header=auto_create)
+        except Exception as e:
+            raise TaskExecutionError(f"追加 Excel 失败：{type(e).__name__}：{e}")
+        self._log(f"  📝 已追加 {written} 行到 {os.path.basename(file_path)}!{sheet}")
+
     def _save_downloaded_file(self, downloaded_path: str) -> None:
         """将下载的文件移动到任务保存目录并记录"""
         import shutil
@@ -741,11 +964,14 @@ class ExecutionEngine:
         )
         try:
             shutil.move(downloaded_path, new_path)
-            self._downloaded_files.append(new_path)
-            self._log(f"  ✅ 文件已保存：{new_path}")
+            final_path = new_path
         except Exception:
-            self._downloaded_files.append(downloaded_path)
-            self._log(f"  ✅ 文件已保存：{downloaded_path}")
+            final_path = downloaded_path
+        self._downloaded_files.append(final_path)
+        # v1.3.0：暴露为运行时变量，便于后续 UPLOAD_FILE 步骤引用
+        self._runtime_vars["last_download"] = final_path
+        self._runtime_vars[f"download_{len(self._downloaded_files)}"] = final_path
+        self._log(f"  ✅ 文件已保存：{final_path}（${{last_download}} 已更新）")
 
     def _finish_download_mission(self, mission, timeout: int) -> None:
         """等待 DrissionPage 下载任务完成并保存文件"""
